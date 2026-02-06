@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import random
 import string
+import secrets
 import smtplib
 import hashlib
 from datetime import datetime, timedelta
@@ -123,6 +124,49 @@ class AuthManager:
             user = os.getenv("USERNAME") or os.getenv("USER") or "user"
         raw = f"{platform.node()}|{platform.system()}|{platform.release()}|{user}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _device_label(self) -> str:
+        import platform
+        try:
+            user = os.getlogin()
+        except Exception:
+            user = os.getenv("USERNAME") or os.getenv("USER") or "user"
+        return f"{platform.node()} ({platform.system()} {platform.release()}) - {user}"
+
+    def _record_device_session(self, user_id: int) -> None:
+        from datetime import datetime, timedelta
+        device_name = self._device_label()
+        now = datetime.utcnow()
+        try:
+            with SessionLocal() as s:
+                existing = s.execute(
+                    select(UserDevice).where(
+                        UserDevice.user_id == user_id,
+                        UserDevice.device_name == device_name,
+                    )
+                ).scalar_one_or_none()
+                if existing:
+                    existing.last_used = now
+                else:
+                    s.add(UserDevice(
+                        user_id=user_id,
+                        device_name=device_name,
+                        ip_address=None,
+                        last_used=now,
+                    ))
+
+                token = secrets.token_urlsafe(32)
+                s.add(Session(
+                    user_id=user_id,
+                    session_token=token,
+                    created_at=now,
+                    expires_at=now + timedelta(days=30),
+                    device_info=device_name,
+                ))
+                s.commit()
+        except Exception:
+            # do not block login if audit/session tracking fails
+            pass
 
     # ------------ DB ops ------------
     def _user_by_email(self, email: str) -> dict | None:
@@ -270,6 +314,9 @@ class AuthManager:
             sent = False
             if send_2fa:
                 sent = self.send_2fa_code(email, u['id'], "login")
+            # If 2FA is not used or could not be sent, record device/session now
+            if not send_2fa or not sent:
+                self._record_device_session(u["id"])
             return {
                 "error": None,
                 "2fa_sent": sent,
@@ -305,6 +352,12 @@ class AuthManager:
         if ok:
             print(f"✅ 2FA verified for {k}")
             self.pending_2fa.pop(k, None)
+            try:
+                uid = entry.get("user_id") or (self._user_by_email(k) or {}).get("id")
+                if uid:
+                    self._record_device_session(uid)
+            except Exception:
+                pass
         else:
             print(f"❌ Invalid 2FA code for {k}")
         

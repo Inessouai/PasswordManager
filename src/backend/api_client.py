@@ -172,6 +172,20 @@ class APIClient:
         except Exception as e:
             return False, str(e)
 
+    def revoke_device_sessions(self, user_id: int, device_name: str) -> Tuple[bool, str]:
+        try:
+            payload = {"device_name": device_name}
+            r = self.session.delete(
+                f"{self.base_url}/devices/{user_id}/revoke",
+                json=payload,
+                timeout=self.timeout,
+            )
+            if r.ok:
+                return True, "ok"
+            return False, f"{r.status_code}: {r.text}"
+        except Exception as e:
+            return False, str(e)
+
     # ---------- EXPORT / IMPORT ----------
     def export_vault(self, user_id: int) -> Tuple[bool, str, Dict[str, Any]]:
         try:

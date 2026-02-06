@@ -350,6 +350,33 @@ def revoke_session(session_id: int):
         db.close()
 
 
+@app.delete("/devices/<int:user_id>/revoke")
+def revoke_device_sessions(user_id: int):
+    db = SessionLocal()
+    try:
+        data = request.get_json(silent=True) or {}
+        device_name = (data.get("device_name") or "").strip()
+        if not device_name:
+            return jsonify({"ok": False, "error": "device_name required"}), 400
+        sess = db.execute(
+            select(Session).where(
+                Session.user_id == user_id,
+                Session.device_info == device_name
+            )
+        ).scalars().all()
+        count = len(sess)
+        for s in sess:
+            db.delete(s)
+        db.commit()
+        _log(db, user_id, f"session:revoke_device:{device_name}:{count}")
+        return jsonify({"ok": True, "revoked": count})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        db.close()
+
+
 # --------------------------- EXPORT / IMPORT ---------------------------
 
 @app.get("/export/<int:user_id>")

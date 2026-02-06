@@ -1,0 +1,15 @@
+{
+  "format": "pgvault",
+  "version": 1,
+  "kdf": {
+    "name": "argon2id",
+    "time_cost": 3,
+    "memory_cost": 65536,
+    "parallelism": 2,
+    "hash_len": 32
+  },
+  "salt": "QGDXAg74XbWHdYQINfNP5A==",
+  "nonce": "HtAxAS1izu9a4YgQ",
+  "tag": "kjruJTmbVgX1Drh3Lx44xg==",
+  "ciphertext": "a5gstwRrnLVBZKH01m94s+ZmiPbX7zm0kuoY3D6xQTMyHOv7hVeqcFoYA5ZNIkPJ7v0Z5Wn4rL/W59BrR7bKaDPhRO1dnX1WyExUHTHSY0dVNXcc6RDc8pYb8negPXeX/f5EuyHZtQjfvFfHtF4AC/kaaUqiCLfksKqNVXoq40mPSsF1IiWg9bkH2bXF0H8LvCklSAKbT1lZwRfM/AJ8MQ2ZS8h2iS8Fxh+UJvpQNJLv3hP3W32YQvdzVHSrH7u77TWbplO1U/uXYcm6xaeTxy3F6SvpdUTF1+zman0A03UHcgqyJrkSWipIzqJ3mp6W1oq6vTTMUG8HgsA1aUhYoGDPoYCiBDBl2y173JvV6ueyeirxhR2CncqsOyxsHHUmSscDJBn6gh66dwQqShCuiXhpU/YAU8lnoesbdzExHBnYy5WRvlLTNgOslji+owlcqjpCcN8YZ8iqLk/4fdMq5AZgVTqYsRZgkEo6fZujpjOQA7li5m987l9tprIegOqa7ghMSJsFrIvvrHoFZCOYQYgcY7ApbJstHjaxjqMcz41DI8uvIEb3W8OuBNLlwdPuFzVrED6xI7OQbJE+9McnxmY/A8P3vQ01xiM6V6Ak2Drj4G51ZG+H4MFkSfI0zoIexhNm8SXKuWj4AVxp78wHFxKM69aWDVfWnGk6t2cEnEhOWjqVZBeGnjd73vMLzdTWtIaDZfaYL9kdnAtcl9y7uycA0lbiLPFKoqyyNQJnfedmt/vjHGy+DNYA+E5lu+Jnqkh3inEOcit06cBajjOgwK1JZz5kmVjYkhc4BECyzBcuWOzilwoH/iolMcr/yJdUraqBVvWFSOp/d1FlmkCH5XXgJ1qO4v6e9JrY3nFMwoDCVaNJrLv8YNlMzmUMZnvPlBe+s+lvKcSZ+hrJWEm7FGExPu4MZKyuuQMwCqwdbscwgrbNtoNyMV8lHKK/Y4L9OJ1tX8owzQhOkplYrXry6TFyb8QYVbFFK8n1AmZzQLsUlaFCEbkTaftzpULbM8clrAJD4dtYdZ8b2w0HeMabSLUlkAELL8Go9WoddCfQHXwu1DhNIKyMOxRO+xI2ZEWAQKSIO9d7taxmtwxUVoHMgMNsCpQZWsmNwatenYP+3GQT86Yfu8Ub0dtWi9Tk01QT924tC7UnpWSsG1wt43S6idYPbV8jIIJO1NhUW51/Y+IWahlLdDmWTrdIsdlhhOepfSk="
+}

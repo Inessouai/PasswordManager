@@ -169,7 +169,9 @@ def encrypt_vault_payload(vault: dict, passphrase: str) -> dict:
         "parallelism": 2,
         "hash_len": 32,
     }
-    key = _argon2_key(passphrase, salt, **kdf_params)
+    # _argon2_key does not accept "name"
+    _kdf = {k: v for k, v in kdf_params.items() if k != "name"}
+    key = _argon2_key(passphrase, salt, **_kdf)
 
     cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
     plaintext = json.dumps(vault, ensure_ascii=True).encode("utf-8")

@@ -218,9 +218,7 @@ def autofill_with_selenium(url: str, username: str, password: str):
         time.sleep(2)
         print(f"✅ Form submitted!")
         
-        # Keep browser open
-        print(f"\n⏰ Browser will stay open for 10 seconds...")
-        time.sleep(10)
+        time.sleep(10000)
         
         print(f"\n{'='*70}")
         print(f"✅ AUTO-FILL COMPLETE!")

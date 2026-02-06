@@ -41,3 +41,5 @@ python-dotenv==1.0.0
 #   pip install PyQt5 SQLAlchemy mysql-connector-python
 #   pip install Flask Flask-CORS cryptography requests
 #   pip install pyautogui pyperclip
+pyotp
+qrcode[pil]==7.4.2

@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 )
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 import random, string, re
 from datetime import datetime
 from src.auth.auth_manager import AuthManager, verify_password
@@ -20,6 +20,13 @@ except Exception:  # fallback if module is missing
         return None
 import csv
 import webbrowser
+
+try:
+    import qrcode
+    from PIL import ImageQt
+    _QR_AVAILABLE = True
+except Exception:
+    _QR_AVAILABLE = False
 
 
 def style_line_edit(line_edit):
@@ -1973,7 +1980,7 @@ class EditProfileModal(QDialog):
         btn_enable.setMinimumHeight(38)
         btn_enable.setStyleSheet(
             Styles.get_button_style(primary=True)
-            + "border-radius: 14px; padding: 8px 14px; font-weight: 600;"
+            + "border-radius: 16px; padding: 8px 14px; font-weight: 600;"
         )
         btn_enable.clicked.connect(self._enable_mfa)
 
@@ -1981,7 +1988,7 @@ class EditProfileModal(QDialog):
         btn_disable.setMinimumHeight(38)
         btn_disable.setStyleSheet(
             Styles.get_button_style(primary=False)
-            + "border-radius: 14px; padding: 8px 14px;"
+            + "border-radius: 16px; padding: 8px 14px;"
         )
         btn_disable.clicked.connect(self._disable_mfa)
 
@@ -1989,7 +1996,7 @@ class EditProfileModal(QDialog):
         btn_codes.setMinimumHeight(34)
         btn_codes.setStyleSheet(
             Styles.get_button_style(primary=False)
-            + "border-radius: 12px; padding: 6px 12px;"
+            + "border-radius: 14px; padding: 6px 12px;"
         )
         btn_codes.clicked.connect(self._show_recovery_codes)
 
@@ -1997,7 +2004,7 @@ class EditProfileModal(QDialog):
         btn_gen.setMinimumHeight(34)
         btn_gen.setStyleSheet(
             Styles.get_button_style(primary=False)
-            + "border-radius: 12px; padding: 6px 12px;"
+            + "border-radius: 14px; padding: 6px 12px;"
         )
         btn_gen.clicked.connect(self._generate_recovery_codes)
 
@@ -2024,7 +2031,7 @@ class EditProfileModal(QDialog):
 
         content_layout.addWidget(mfa_card)
 
-        self._mfa_available = all(hasattr(self.auth, m) for m in ("send_2fa_code", "verify_2fa_email"))
+        self._mfa_available = all(hasattr(self.auth, m) for m in ("enable_totp", "verify_totp", "disable_totp"))
         if not self._mfa_available:
             btn_enable.setToolTip("Fonction MFA indisponible")
             btn_disable.setToolTip("Fonction MFA indisponible")
@@ -2102,48 +2109,217 @@ class EditProfileModal(QDialog):
 
     def _enable_mfa(self):
         if not self._mfa_available:
-            QMessageBox.information(self, "MFA", "Fonction MFA indisponible.")
+            QMessageBox.information(self, "MFA", "Fonction TOTP indisponible.")
             return
         email = self.email_input.text().strip()
         if not email:
             QMessageBox.warning(self, "MFA", "Email requis.")
             return
-        if not self.auth.send_2fa_code(email, self.user_data.get("id"), "mfa_enable"):
-            QMessageBox.warning(self, "MFA", "Impossible d'envoyer le code.")
+        res = self.auth.enable_totp(email)
+        if res.get("error"):
+            QMessageBox.warning(self, "MFA", res.get("error"))
             return
-        code = self._prompt_mfa_code()
+        secret = res.get("secret")
+        uri = res.get("uri")
+        if not secret:
+            QMessageBox.warning(self, "MFA", "Secret TOTP introuvable.")
+            return
+        self._show_totp_secret(secret, uri)
+        code = self._prompt_mfa_code("TOTP", "Code ? 6 chiffres")
         if not code:
             return
-        if self.auth.verify_2fa_email(email, code):
+        if self.auth.verify_totp(email, code):
             self.user_data['mfa_enabled'] = True
+            self.mfa_status.setText("MFA: active")
+            QMessageBox.information(self, "MFA", "TOTP activ?")
+        else:
+            QMessageBox.warning(self, "MFA", "Code invalide ou expir?")
+
+    def _show_totp_secret(self, secret: str, uri: str | None = None):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("TOTP")
+        dlg.setFixedSize(420, 420)
+        dlg.setModal(True)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {Styles.PRIMARY_BG}, stop:1 {Styles.SECONDARY_BG});
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 22px;
+            }}
+            QLabel {{ color: {Styles.TEXT_PRIMARY}; background: transparent; }}
+        """)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(10)
+
+        info = QLabel("Ajoutez ce compte dans votre application d'authentification.")
+        info.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+        lay.addWidget(info)
+
+        if uri and _QR_AVAILABLE:
             try:
-                self.auth.set_mfa_enabled(email, True)
+                qr = qrcode.QRCode(border=2, box_size=6)
+                qr.add_data(uri)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                qimage = ImageQt.ImageQt(img)
+                pix = QPixmap.fromImage(qimage)
+                qr_label = QLabel()
+                qr_label.setAlignment(Qt.AlignCenter)
+                qr_label.setPixmap(pix)
+                lay.addWidget(qr_label)
             except Exception:
                 pass
-            self.mfa_status.setText("MFA: active")
-            QMessageBox.information(self, "MFA", "MFA active")
-        else:
-            QMessageBox.warning(self, "MFA", "Code invalide ou expiré")
+
+        secret_box = QLineEdit()
+        secret_box.setReadOnly(True)
+        secret_box.setText(secret)
+        secret_box.setStyleSheet(Styles.get_input_style() + "border-radius: 14px;")
+        lay.addWidget(secret_box)
+
+        row = QHBoxLayout()
+        btn_copy = QPushButton("Copier")
+        btn_copy.setStyleSheet(Styles.get_button_style(primary=False) + "border-radius: 16px;")
+        btn_copy.setMinimumHeight(36)
+        btn_next = QPushButton("Continuer")
+        btn_next.setStyleSheet(Styles.get_button_style(primary=True) + "border-radius: 16px;")
+        btn_next.setMinimumHeight(36)
+        row.addWidget(btn_copy)
+        row.addWidget(btn_next)
+        lay.addLayout(row)
+
+        def _copy():
+            QApplication.clipboard().setText(secret)
+            QMessageBox.information(self, "TOTP", "Secret copie dans le presse-papiers")
+
+        btn_copy.clicked.connect(_copy)
+        btn_next.clicked.connect(dlg.accept)
+        dlg.exec_()
 
     def _disable_mfa(self):
         if not self._mfa_available:
-            QMessageBox.information(self, "MFA", "Fonction MFA indisponible.")
+            QMessageBox.information(self, "MFA", "Fonction TOTP indisponible.")
             return
         email = self.email_input.text().strip()
         if not email:
             QMessageBox.warning(self, "MFA", "Email requis.")
             return
-        self.user_data['mfa_enabled'] = False
-        try:
-            self.auth.set_mfa_enabled(email, False)
-        except Exception:
-            pass
-        self.mfa_status.setText("MFA: desactive")
-        QMessageBox.information(self, "MFA", "MFA desactive")
+        if self.auth.disable_totp(email):
+            self.user_data['mfa_enabled'] = False
+            self.mfa_status.setText("MFA: desactive")
+            QMessageBox.information(self, "MFA", "TOTP d?sactiv?")
+        else:
+            QMessageBox.warning(self, "MFA", "Impossible de d?sactiver TOTP")
 
-    def _prompt_mfa_code(self) -> str | None:
+    def _show_recovery_codes(self):
+        if not self._mfa_available:
+            QMessageBox.information(self, "Codes", "Fonction MFA indisponible.")
+            return
+        user_id = self.user_data.get("id")
+        if not user_id:
+            QMessageBox.warning(self, "Codes", "Utilisateur introuvable")
+            return
+        try:
+            codes = self.auth.list_recovery_codes(int(user_id))
+        except Exception:
+            QMessageBox.warning(self, "Codes", "Impossible de charger les codes")
+            return
+        if not codes:
+            QMessageBox.information(
+                self,
+                "Codes",
+                "Aucun code disponible. Regenerer pour afficher de nouveaux codes.",
+            )
+            return
+        self._display_recovery_codes(
+            codes,
+            title="Codes de recuperation",
+            subtitle="Conservez ces codes en lieu sur.",
+        )
+
+    def _generate_recovery_codes(self):
+        if not self._mfa_available:
+            QMessageBox.information(self, "Codes", "Fonction MFA indisponible.")
+            return
+        user_id = self.user_data.get("id")
+        if not user_id:
+            QMessageBox.warning(self, "Codes", "Utilisateur introuvable")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Codes",
+            "Regenerer les codes invalidera les anciens. Continuer ?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            codes = self.auth.generate_recovery_codes(int(user_id))
+        except Exception:
+            QMessageBox.warning(self, "Codes", "Generation impossible")
+            return
+        if not codes:
+            QMessageBox.warning(self, "Codes", "Generation impossible")
+            return
+        self._display_recovery_codes(
+            codes,
+            title="Nouveaux codes",
+            subtitle="Ces codes ne seront affiches qu'une seule fois.",
+        )
+
+    def _display_recovery_codes(self, codes: list[str], title: str, subtitle: str):
         dlg = QDialog(self)
-        dlg.setWindowTitle("MFA")
+        dlg.setWindowTitle(title)
+        dlg.setFixedSize(420, 360)
+        dlg.setModal(True)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {Styles.PRIMARY_BG}, stop:1 {Styles.SECONDARY_BG});
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 18px;
+            }}
+            QLabel {{ color: {Styles.TEXT_PRIMARY}; background: transparent; }}
+        """)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(10)
+
+        info = QLabel(subtitle)
+        info.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+        lay.addWidget(info)
+
+        codes_box = QTextEdit()
+        codes_box.setReadOnly(True)
+        codes_box.setStyleSheet(Styles.get_input_style())
+        codes_box.setText("\n".join(codes))
+        lay.addWidget(codes_box, 1)
+
+        row = QHBoxLayout()
+        btn_copy = QPushButton("Copier")
+        btn_copy.setStyleSheet(Styles.get_button_style(primary=False))
+        btn_copy.setMinimumHeight(36)
+        btn_close = QPushButton("Fermer")
+        btn_close.setStyleSheet(Styles.get_button_style(primary=True))
+        btn_close.setMinimumHeight(36)
+        row.addWidget(btn_copy)
+        row.addWidget(btn_close)
+        lay.addLayout(row)
+
+        def _copy():
+            QApplication.clipboard().setText("\n".join(codes))
+            QMessageBox.information(self, "Codes", "Codes copies dans le presse-papiers")
+
+        btn_copy.clicked.connect(_copy)
+        btn_close.clicked.connect(dlg.accept)
+        dlg.exec_()
+
+    def _prompt_mfa_code(self, title: str = "MFA", label: str = "Code 6 chiffres") -> str | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
         dlg.setFixedSize(360, 210)
         dlg.setModal(True)
         dlg.setStyleSheet(f"""
@@ -2160,68 +2336,37 @@ class EditProfileModal(QDialog):
         lay.setContentsMargins(20, 18, 20, 18)
         lay.setSpacing(12)
 
-        title = QLabel("Entrez le code reçu par email")
+        title = QLabel(label)
         title.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
         lay.addWidget(title)
 
         code_input = QLineEdit()
-        code_input.setPlaceholderText("Code à 6 chiffres")
+        code_input.setPlaceholderText("000000")
         code_input.setMaxLength(6)
         code_input.setAlignment(Qt.AlignCenter)
         code_input.setStyleSheet(Styles.get_input_style())
         lay.addWidget(code_input)
 
-        btns = QHBoxLayout()
-        btns.setSpacing(10)
-        ok_btn = QPushButton("OK")
-        ok_btn.setStyleSheet(Styles.get_button_style(primary=True))
-        ok_btn.setMinimumHeight(36)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet(Styles.get_button_style(primary=False))
-        cancel_btn.setMinimumHeight(36)
-        btns.addWidget(ok_btn)
-        btns.addWidget(cancel_btn)
-        lay.addLayout(btns)
+        row = QHBoxLayout()
+        btn_ok = QPushButton("Valider")
+        btn_ok.setStyleSheet(Styles.get_button_style(primary=True) + "border-radius: 14px;")
+        btn_ok.setMinimumHeight(38)
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setStyleSheet(Styles.get_button_style(primary=False) + "border-radius: 14px;")
+        btn_cancel.setMinimumHeight(38)
+        row.addWidget(btn_ok)
+        row.addWidget(btn_cancel)
+        lay.addLayout(row)
 
-        ok_btn.clicked.connect(dlg.accept)
-        cancel_btn.clicked.connect(dlg.reject)
-        code_input.returnPressed.connect(dlg.accept)
+        res = {"code": None}
+        def _accept():
+            res["code"] = code_input.text().strip()
+            dlg.accept()
+        btn_ok.clicked.connect(_accept)
+        btn_cancel.clicked.connect(dlg.reject)
 
-        if dlg.exec_() != QDialog.Accepted:
-            return None
-        return code_input.text().strip()
-
-    def _generate_recovery_codes(self):
-        if not getattr(self, "_mfa_available", False) or not hasattr(self.auth, "generate_recovery_codes"):
-            QMessageBox.information(self, "Codes", "Fonction indisponible.")
-            return
-        user = self.auth._user_by_email(self.email_input.text().strip())
-        if not user:
-            return
-        codes = self.auth.generate_recovery_codes(user.get('id'), count=8)
-        QMessageBox.information(self, "Codes", "Codes generes:\n" + "\n".join(codes))
-
-    def _show_recovery_codes(self):
-        if not getattr(self, "_mfa_available", False) or not hasattr(self.auth, "list_recovery_codes"):
-            QMessageBox.information(self, "Codes", "Fonction indisponible.")
-            return
-        user = self.auth._user_by_email(self.email_input.text().strip())
-        if not user:
-            return
-        codes = self.auth.list_recovery_codes(user.get('id'))
-        if not codes:
-            if hasattr(self.auth, "generate_recovery_codes"):
-                if QMessageBox.question(
-                    self,
-                    "Codes",
-                    "Aucun code disponible. Generer de nouveaux codes ?",
-                    QMessageBox.Yes | QMessageBox.No
-                ) == QMessageBox.Yes:
-                    codes = self.auth.generate_recovery_codes(user.get('id'), count=8)
-            if not codes:
-                QMessageBox.information(self, "Codes", "Aucun code disponible")
-                return
-        QMessageBox.information(self, "Codes", "\n".join(codes))
+        dlg.exec_()
+        return res["code"]
 
     def _logout_all_devices(self):
         user_id = self.user_data.get("id")
@@ -2243,10 +2388,11 @@ class EditProfileModal(QDialog):
         QMessageBox.information(self, "Sessions", f"Sessions révoquées: {revoked}")
 
 class DeviceSessionsModal(QDialog):
-    def __init__(self, sessions: list[dict], on_revoke, parent=None):
+    def __init__(self, sessions: list[dict], on_revoke_session, on_revoke_device, parent=None):
         super().__init__(parent)
         self.sessions = sessions or []
-        self.on_revoke = on_revoke
+        self.on_revoke_session = on_revoke_session
+        self.on_revoke_device = on_revoke_device
         self.setWindowTitle("Appareils & sessions")
         self.setFixedSize(560, 520)
         self.setModal(True)
@@ -2269,9 +2415,9 @@ class DeviceSessionsModal(QDialog):
                 background: transparent;
             }}
             QFrame#sessionRow {{
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 12px;
+                background: rgba(255,255,255,0.05);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 18px;
             }}
         """)
 
@@ -2279,32 +2425,9 @@ class DeviceSessionsModal(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
         title = QLabel("Appareils connectés")
-        title.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:16px; font-weight:bold;")
+        title.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:17px; font-weight:bold;")
         layout.addWidget(title)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setObjectName("devicesScroll")
-        scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollArea::viewport { background: transparent; }
-            QScrollArea#devicesScroll > QWidget > QWidget { background: transparent; }
-            QScrollBar:vertical {
-                background: rgba(255,255,255,0.04);
-                width: 8px;
-                margin: 6px 0 6px 0;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(59,130,246,0.6);
-                min-height: 22px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(59,130,246,0.85);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-        """)
+
         list_container = QWidget()
         list_container.setObjectName("devicesList")
         list_container.setStyleSheet("background: transparent;")
@@ -2312,8 +2435,17 @@ class DeviceSessionsModal(QDialog):
         list_layout = QVBoxLayout(list_container)
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(8)
+
+        def _format_last_used(value):
+            if not value:
+                return "-"
+            try:
+                return datetime.fromisoformat(str(value)).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                return str(value)
+
         if not self.sessions:
-            empty = QLabel("Aucune session active.")
+            empty = QLabel("Aucun appareil.")
             empty.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
             list_layout.addWidget(empty)
         else:
@@ -2321,64 +2453,93 @@ class DeviceSessionsModal(QDialog):
                 row = QFrame()
                 row.setObjectName("sessionRow")
                 row_layout = QHBoxLayout(row)
-                row_layout.setContentsMargins(12, 10, 12, 10)
+                row_layout.setContentsMargins(16, 12, 16, 12)
+                row_layout.setSpacing(12)
+
                 device = sess.get("device_name") or sess.get("device_info") or "Inconnu"
                 ip = sess.get("ip_address") or "-"
-                info = QLabel(f"{device}  -  {ip}")
-                info.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:12px;")
-                row_layout.addWidget(info)
-                if sess.get("id"):
-                    revoke_btn = QPushButton("Révoquer")
-                    revoke_btn.setStyleSheet(Styles.get_button_style(primary=False))
-                    revoke_btn.setMinimumHeight(34)
-                    revoke_btn.clicked.connect(lambda _, sid=sess.get("id"), w=row: self._revoke(sid, w))
-                    row_layout.addWidget(revoke_btn)
+                status = sess.get("status") or ("Actif" if sess.get("id") else "Historique")
+                last_used = sess.get("last_used") or sess.get("created_at")
+
+                left = QVBoxLayout()
+                left.setSpacing(4)
+                device_lbl = QLabel(device)
+                device_lbl.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:12px; font-weight:600;")
+                left.addWidget(device_lbl)
+
+                meta = QLabel(f"{ip}  -  Derniere activite: {_format_last_used(last_used)}")
+                meta.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:11px;")
+                left.addWidget(meta)
+
+                left_wrap = QWidget()
+                left_wrap.setStyleSheet("background: transparent;")
+                left_wrap.setLayout(left)
+                row_layout.addWidget(left_wrap, 1)
+
+                status_lbl = QLabel(status)
+                status_lbl.setStyleSheet(
+                    f"color:{Styles.TEXT_SECONDARY}; font-size:11px; padding:6px 10px; "
+                    "border-radius:12px; background: rgba(255,255,255,0.08);"
+                )
+                row_layout.addWidget(status_lbl)
+
+                revoke_btn = QPushButton("Déconnecter")
+                revoke_btn.setStyleSheet(Styles.get_button_style(primary=False) + "border-radius: 14px;")
+                revoke_btn.setMinimumHeight(36)
+                revoke_btn.setCursor(Qt.PointingHandCursor)
+
+                session_id = sess.get("id")
+                device_name = sess.get("device_name") or sess.get("device_info")
+                if session_id:
+                    revoke_btn.clicked.connect(
+                        lambda _, sid=session_id, w=row: self._revoke_session(sid, w)
+                    )
+                elif device_name:
+                    revoke_btn.clicked.connect(
+                        lambda _, dn=device_name, w=row: self._revoke_device(dn, w)
+                    )
+                else:
+                    revoke_btn.setEnabled(False)
+
+                row_layout.addWidget(revoke_btn)
                 list_layout.addWidget(row)
-        scroll.setWidget(list_container)
-        layout.addWidget(scroll, 1)
+
+        layout.addWidget(list_container, 1)
+
         close_btn = QPushButton("Fermer")
-        close_btn.setStyleSheet(Styles.get_button_style(primary=False))
-        close_btn.setMinimumHeight(40)
+        close_btn.setStyleSheet(Styles.get_button_style(primary=False) + "border-radius: 16px;")
+        close_btn.setMinimumHeight(42)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
-    def _revoke(self, session_id: int, row_widget: QWidget):
-        # Revoke ALL sessions no matter which row is clicked
-        revoked_any = False
-        failed_any = False
-        had_ids = False
-        for sess in list(self.sessions or []):
-            sid = sess.get("id")
-            if not sid:
-                continue
-            had_ids = True
-            ok = False
-            try:
-                ok = self.on_revoke(int(sid))
-            except Exception:
-                ok = False
-            if ok:
-                revoked_any = True
-            else:
-                failed_any = True
-
-        if not had_ids:
-            QMessageBox.information(self, "Sessions", "Aucune session à révoquer.")
+    def _revoke_session(self, session_id: int, row_widget: QWidget):
+        if not session_id:
+            QMessageBox.information(self, "Sessions", "Aucune session ? révoquer.")
             return
-
-        if revoked_any:
-            # Hide rows if at least one revoke succeeded
-            for i in reversed(range(self.layout().count())):
-                w = self.layout().itemAt(i).widget()
-                if w:
-                    w.setParent(None)
-            if failed_any:
-                QMessageBox.information(self, "Sessions", "Certaines sessions ont été déconnectées.")
-            else:
-                QMessageBox.information(self, "Sessions", "Tous les appareils ont été déconnectés.")
+        ok = False
+        try:
+            ok = self.on_revoke_session(int(session_id))
+        except Exception:
+            ok = False
+        if ok:
+            row_widget.setParent(None)
+            QMessageBox.information(self, "Sessions", "Session révoquée.")
         else:
-            QMessageBox.warning(self, "Erreur", "Impossible de révoquer les sessions.")
+            QMessageBox.warning(self, "Erreur", "Impossible de révoquer la session.")
 
+    def _revoke_device(self, device_name: str, row_widget: QWidget):
+        if not device_name:
+            return
+        ok = False
+        try:
+            ok = self.on_revoke_device(device_name)
+        except Exception:
+            ok = False
+        if ok:
+            row_widget.setParent(None)
+            QMessageBox.information(self, "Appareils", "Appareil déconnecté.")
+        else:
+            QMessageBox.warning(self, "Erreur", "Impossible de déconnecter l'appareil.")
 
 class AuditLogModal(QDialog):
     def __init__(self, user_id: int, auth_manager: AuthManager, parent=None):

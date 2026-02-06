@@ -319,15 +319,17 @@ class MainWindow(QMainWindow):
         btn_journal.clicked.connect(self._show_journal_placeholder)
         actions.addWidget(btn_journal)
 
-        btn_profile = header_btn("Profil")
+        btn_profile = header_btn("Profile")
         btn_profile.clicked.connect(self._show_edit_profile_modal)
         actions.addWidget(btn_profile)
 
         btn_export = header_btn("Export")
+        btn_export.setStyleSheet(btn_export.styleSheet() + "border-radius: 14px;")
         btn_export.clicked.connect(self._export_encrypted_vault)
         actions.addWidget(btn_export)
 
         btn_import = header_btn("Import")
+        btn_import.setStyleSheet(btn_import.styleSheet() + "border-radius: 14px;")
         btn_import.clicked.connect(self._import_encrypted_vault)
         actions.addWidget(btn_import)
 
@@ -584,7 +586,7 @@ class MainWindow(QMainWindow):
         self._show_2fa_login(user)
 
     def _show_2fa_login(self, user: dict):
-        dlg = TwoFactorModal(user["email"], "<code envoyÃƒÂ©>", self)
+        dlg = TwoFactorModal(user["email"], "<code envoyé>", self)
 
         def verify():
             code = dlg.code_input.text().strip()
@@ -624,15 +626,15 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, 
             "Inscription réussie", 
-            f"Ã¢Å“â€¦ {msg}\n\n"
-            "Un code de vÃƒÂ©rification a ÃƒÂ©tÃƒÂ© envoyÃƒÂ© Ãƒ  votre email.\n"
-            "Veuillez vÃƒÂ©rifier votre boÃƒÂ®te mail (et les spams)."
+            f"✅ {msg}\n\n"
+            "Un code de vérification a été envoyé à votre email.\n"
+            "Veuillez vérifier votre boîte mail (et les spams)."
         )
         
         # Get user_id from extra data
         user_id = extra.get('user_id')
         if not user_id:
-            self._show_error_dialog("Erreur", "Impossible de rÃƒÂ©cupÃƒÂ©rer l'ID utilisateur")
+            self._show_error_dialog("Erreur", "Impossible de récupérer l'ID utilisateur")
             self._auth_flow()
             return
         
@@ -642,7 +644,7 @@ class MainWindow(QMainWindow):
     def _show_email_verification(self, email: str, user_id: int):
         """Show email verification dialog with resend option"""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Ã°Å¸â€œÂ§ VÃƒÂ©rification de l'email")
+        dlg.setWindowTitle("✅ Vérification de l'email")
         dlg.setFixedSize(480, 380)
         dlg.setModal(True)
         dlg.setAttribute(Qt.WA_StyledBackground, True)
@@ -661,7 +663,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(20)
         
         # Icon
-        icon = QLabel("Ã°Å¸â€œÂ§")
+        icon = QLabel("✅")
         icon.setStyleSheet("font-size:56px;")
         icon.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon)
@@ -676,9 +678,9 @@ class MainWindow(QMainWindow):
         
         # Info
         info = QLabel(
-            f"Un code de vÃƒÂ©rification a ÃƒÂ©tÃƒÂ© envoyÃƒÂ© Ãƒ :\n"
+            f"Un code de vérification a été envoyé à:\n"
             f"{email}\n\n"
-            f"VÃƒÂ©rifiez votre boÃƒÂ®te mail (et les spams)"
+            f"Vérifiez votre boîte mail (et les spams)"
         )
         info.setAlignment(Qt.AlignCenter)
         info.setWordWrap(True)
@@ -687,7 +689,7 @@ class MainWindow(QMainWindow):
         
         # Code input
         code_input = QLineEdit()
-        code_input.setPlaceholderText("Code Ãƒ  6 chiffres")
+        code_input.setPlaceholderText("Code à 6 chiffres")
         code_input.setMaxLength(6)
         code_input.setAlignment(Qt.AlignCenter)
         code_input.setFont(QFont("Courier New", 20, QFont.Bold))
@@ -716,7 +718,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(verify_btn)
         
         # Resend button
-        resend_btn = QPushButton("Ã°Å¸â€â€ž Renvoyer le code")
+        resend_btn = QPushButton("❌ Renvoyer le code")
         resend_btn.setMinimumHeight(44)
         resend_btn.setCursor(Qt.PointingHandCursor)
         resend_btn.setStyleSheet(Styles.get_button_style(False))
@@ -729,7 +731,7 @@ class MainWindow(QMainWindow):
         def update_countdown():
             if countdown["seconds"] > 0:
                 countdown["seconds"] -= 1
-                status_label.setText(f"Ã¢ÂÂ±Ã¯Â¸Â Renvoyer disponible dans {countdown['seconds']}s")
+                status_label.setText(f"❌ Renvoyer disponible dans {countdown['seconds']}s")
                 resend_btn.setEnabled(False)
             else:
                 timer.stop()
@@ -748,7 +750,7 @@ class MainWindow(QMainWindow):
             code = code_input.text().strip()
             
             if not code or len(code) != 6:
-                QMessageBox.warning(dlg, "Code invalide", "Veuillez saisir un code Ãƒ  6 chiffres")
+                QMessageBox.warning(dlg, "Code invalide", "Veuillez saisir un code à 6 chiffres")
                 return
             
             # Verify the registration code
@@ -758,8 +760,8 @@ class MainWindow(QMainWindow):
                 dlg.accept()
                 QMessageBox.information(
                     self, 
-                    "Email vÃƒÂ©rifiÃƒÂ©", 
-                    "Ã¢Å“â€¦ Votre email a ÃƒÂ©tÃƒÂ© vÃƒÂ©rifiÃƒÂ© avec succÃƒÂ¨s!\n\n"
+                    "Email vérifié", 
+                    "✅ Votre email a été vérifié avec succès!\n\n"
                     "Vous pouvez maintenant vous connecter."
                 )
                 user = {
@@ -772,7 +774,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     dlg,
                     "Code invalide", 
-                    "Ã¢ÂÅ’ Le code saisi est invalide ou a expirÃƒÂ©.\n\n"
+                    "❌ Le code saisi est invalide ou a expiré.\n\n"
                     "Cliquez sur 'Renvoyer le code' pour recevoir un nouveau code."
                 )
         
@@ -782,9 +784,9 @@ class MainWindow(QMainWindow):
             if ok:
                 QMessageBox.information(
                     dlg,
-                    "Code renvoyÃƒÂ©",
-                    f"Ã¢Å“â€¦ Un nouveau code a ÃƒÂ©tÃƒÂ© envoyÃƒÂ© Ãƒ :\n{email}\n\n"
-                    "VÃƒÂ©rifiez votre boÃƒÂ®te mail (et les spams)"
+                    "Code renvoyé",
+                    f"✅ Un nouveau code a été envoyé à:\n{email}\n\n"
+                    "Vérifiez votre boîte mail (et les spams)"
                 )
                 code_input.clear()
                 start_countdown()
@@ -792,8 +794,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     dlg,
                     "Erreur",
-                    "Ã¢ÂÅ’ Impossible de renvoyer le code.\n\n"
-                    "L'email est peut-ÃƒÂªtre dÃƒÂ©jÃƒ  vÃƒÂ©rifiÃƒÂ©."
+                    "❌ Impossible de renvoyer le code.\n\n"
+                    "L'email est peut-être déjà vérifié."
                 )
         
         verify_btn.clicked.connect(verify_code)
@@ -811,9 +813,9 @@ class MainWindow(QMainWindow):
         if result != QDialog.Accepted:
             QMessageBox.warning(
                 self,
-                "VÃƒÂ©rification annulÃƒÂ©e",
-                "Ã¢Å¡ Ã¯Â¸Â Votre email n'a pas ÃƒÂ©tÃƒÂ© vÃƒÂ©rifiÃƒÂ©.\n\n"
-                "Vous devrez vÃƒÂ©rifier votre email pour vous connecter."
+                "Vérification annulée",
+                "❌ Votre email n'a pas été vérifié.\n\n"
+                "Vous devrez vérifier votre email pour vous connecter."
             )
             self._auth_flow()
 
@@ -1021,9 +1023,9 @@ class MainWindow(QMainWindow):
 
         row = QHBoxLayout()
         ok_btn = QPushButton("OK")
-        ok_btn.setStyleSheet(Styles.get_button_style(True))
+        ok_btn.setStyleSheet(Styles.get_button_style(True) + "border-radius: 14px;")
         cancel_btn = QPushButton("Annuler")
-        cancel_btn.setStyleSheet(Styles.get_button_style(False))
+        cancel_btn.setStyleSheet(Styles.get_button_style(False) + "border-radius: 14px;")
         row.addWidget(ok_btn)
         row.addWidget(cancel_btn)
         lay.addLayout(row)
@@ -1063,7 +1065,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(20, 16, 20, 16)
         lay.setSpacing(12)
 
-        lay.addWidget(QLabel("Conflits (mÃªme site + identifiant):"))
+        lay.addWidget(QLabel("Conflits (mêmes site + identifiant):"))
         mode = QComboBox()
         mode.addItems(["Merge", "Skip", "Overwrite"])
         mode.setStyleSheet(Styles.get_input_style())
@@ -1071,9 +1073,9 @@ class MainWindow(QMainWindow):
 
         row = QHBoxLayout()
         ok_btn = QPushButton("OK")
-        ok_btn.setStyleSheet(Styles.get_button_style(True))
+        ok_btn.setStyleSheet(Styles.get_button_style(True) + "border-radius: 14px;")
         cancel_btn = QPushButton("Annuler")
-        cancel_btn.setStyleSheet(Styles.get_button_style(False))
+        cancel_btn.setStyleSheet(Styles.get_button_style(False) + "border-radius: 14px;")
         row.addWidget(ok_btn)
         row.addWidget(cancel_btn)
         lay.addLayout(row)
@@ -1097,7 +1099,7 @@ class MainWindow(QMainWindow):
             self._show_error_dialog("Erreur", msg)
             return
 
-        passphrase = self._prompt_passphrase("Export chiffrÃ© (.pgvault)", confirm=True)
+        passphrase = self._prompt_passphrase("Export chiffré (.pgvault)", confirm=True)
         if not passphrase:
             return
 
@@ -1111,7 +1113,7 @@ class MainWindow(QMainWindow):
             filename += ".pgvault"
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(enc, f, indent=2)
-        QMessageBox.information(self, "Export", "âœ… Export chiffrÃ© terminÃ©.")
+        QMessageBox.information(self, "Export", " Export chiffré terminé.")
 
     def _import_encrypted_vault(self):
         if not self.current_user:
@@ -1122,7 +1124,7 @@ class MainWindow(QMainWindow):
         if not filename:
             return
 
-        passphrase = self._prompt_passphrase("Importer un coffre chiffrÃ©", confirm=False)
+        passphrase = self._prompt_passphrase("Importer un coffre chiffré", confirm=False)
         if not passphrase:
             return
 
@@ -1131,7 +1133,7 @@ class MainWindow(QMainWindow):
                 blob = json.load(f)
             vault = decrypt_vault_payload(blob, passphrase)
         except Exception as e:
-            self._show_error_dialog("Erreur", f"Impossible de dÃ©chiffrer: {e}")
+            self._show_error_dialog("Erreur", f"Impossible de déchiffrer: {e}")
             return
 
         items = vault.get("passwords") or []
@@ -1238,15 +1240,38 @@ class MainWindow(QMainWindow):
             return
 
         items = []
-        for s in sessions or []:
+        sessions = sessions or []
+        devices = devices or []
+
+        # Active sessions
+        for s in sessions:
             items.append({
                 "device_name": s.get("device_info") or "Session",
                 "ip_address": "-",
                 "id": s.get("id"),
+                "status": "Actif",
+                "last_used": s.get("created_at"),
             })
 
-        def _revoke(session_id: int):
+        # Known devices (history) not currently active
+        active_names = {s.get("device_info") for s in sessions if s.get("device_info")}
+        for d in devices:
+            name = d.get("device_name") or "Appareil"
+            if name not in active_names:
+                items.append({
+                    "device_name": name,
+                    "ip_address": d.get("ip_address") or "-",
+                    "id": None,
+                    "status": "Historique",
+                    "last_used": d.get("last_used"),
+                })
+
+        def _revoke_session(session_id: int):
             ok2, _msg = self.api_client.revoke_session(session_id)
+            return ok2
+
+        def _revoke_device(device_name: str):
+            ok2, _msg = self.api_client.revoke_device_sessions(self.current_user["id"], device_name)
             return ok2
 
         if not items:
@@ -1254,8 +1279,9 @@ class MainWindow(QMainWindow):
                 "device_name": "Appareil actuel",
                 "ip_address": "-",
                 "id": None,
+                "status": "Actif",
             }]
-        DeviceSessionsModal(items, _revoke, self).exec_()
+        DeviceSessionsModal(items, _revoke_session, _revoke_device, self).exec_()
 
     def _show_journal_placeholder(self):
         if not self.current_user:
@@ -1268,7 +1294,6 @@ class MainWindow(QMainWindow):
             return
         AuditLogModal(self.current_user["id"], self.auth, self).exec_()
 
-    # ---------------- Stats Page (in main area) ----------------
     def _clear_layout(self, layout):
         while layout.count():
             item = layout.takeAt(0)
@@ -1628,7 +1653,7 @@ class MainWindow(QMainWindow):
                 site_name = payload.get("site_name", "")
                 site_url = payload.get("site_url", "")
                 username = payload.get("username", "")
-                plain_password = payload.get("password", "")  # âœ… Now expects 'password' key
+                plain_password = payload.get("password", "")  #  Now expects 'password' key
                 category = payload.get("category", "personal")
                 
                 # Debug logging
@@ -1657,10 +1682,10 @@ class MainWindow(QMainWindow):
                     return
                 
                 if not self.current_user or 'id' not in self.current_user:
-                    QMessageBox.warning(self, "Erreur", "Utilisateur non connectÃ©")
+                    QMessageBox.warning(self, "Erreur", "Utilisateur non connecté.")
                     return
                 
-                # âœ… Send plain password to backend - backend will hash it
+                #  Send plain password to backend - backend will hash it
                 ok, msg, response = self.api_client.add_password(
                     user_id=self.current_user["id"],
                     site_name=site_name,
@@ -1671,31 +1696,31 @@ class MainWindow(QMainWindow):
                 )
                 
                 if ok:
-                    print(f"âœ… Password added successfully: {response}")
+                    print(f" Password added successfully: {response}")
                     self.load_passwords()
                     QMessageBox.information(
                         self, 
-                        "SuccÃ¨s", 
-                        f"âœ… Mot de passe ajoutÃ© avec succÃ¨s!\n\n"
+                        "Succès", 
+                        f" Mot de passe ajouté avec succès!\n\n"
                         f"Site: {site_name}\n"
                         f"Identifiant: {username}"
                     )
                 else:
-                    print(f"âŒ Failed to add password: {msg}")
+                    print(f" Failed to add password: {msg}")
                     QMessageBox.warning(
                         self, 
                         "Erreur", 
-                        f"âŒ Impossible d'ajouter le mot de passe:\n\n{msg}"
+                        f" Impossible d'ajouter le mot de passe:\n\n{msg}"
                     )
                     
             except Exception as e:
-                print(f"âŒ Exception in _add: {e}")
+                print(f" Exception in _add: {e}")
                 import traceback
                 traceback.print_exc()
                 QMessageBox.critical(
                     self, 
                     "Erreur", 
-                    f"âŒ Une erreur s'est produite:\n\n{str(e)}"
+                    f" Une erreur s'est produite:\n\n{str(e)}"
                 )
 
         dlg.password_added.connect(_add)
@@ -1712,7 +1737,7 @@ class MainWindow(QMainWindow):
             p_prefill["password"] = pt
             p_prefill["encrypted_password"] = pt
         except Exception as e:
-            self._show_error_dialog("Erreur", f"Impossible de dÃƒÂ©crypter: {str(e)}")
+            self._show_error_dialog("Erreur", f"Impossible de déchiffrer: {str(e)}")
             return
 
         dlg = EditPasswordModal(p_prefill, self)
@@ -1731,7 +1756,7 @@ class MainWindow(QMainWindow):
             )
             if ok:
                 self.load_passwords()
-                QMessageBox.information(self, "SuccÃƒÂ¨s", "Ã¢Å“â€¦ Mot de passe mis Ãƒ  jour.")
+                QMessageBox.information(self, "Succès", "✅ Mot de passe mis à jour.")
             else:
                 self._show_error_dialog("Erreur", msg)
 
@@ -1874,7 +1899,7 @@ class MainWindow(QMainWindow):
         try:
             plain = self._decrypt_from_backend(int(pid))
         except Exception as e:
-            self._show_error_dialog("Erreur de dÃƒÂ©chiffrement", str(e))
+            self._show_error_dialog("Erreur de déchiffrement", str(e))
             return
 
         p = next((x for x in self._all_passwords if x.get("id") == int(pid)), {}).copy()
@@ -1895,12 +1920,11 @@ class MainWindow(QMainWindow):
         try:
             plain = self._decrypt_from_backend(int(pid))
         except Exception as e:
-            self._show_error_dialog("Erreur de dÃƒÂ©chiffrement", str(e))
+            self._show_error_dialog("Erreur de déchiffrement", str(e))
             return
 
         QApplication.clipboard().setText(plain)
-        QMessageBox.information(self, "CopiÃƒÂ©", "Ã°Å¸â€œâ€¹ Mot de passe copiÃƒÂ© dans le presse-papier!")
-
+        QMessageBox.information(self, "Copié", "Mot de passe copié dans le presse-papier!")
     # ---------------- AUTO-FILL HANDLER ----------------
     def on_auto_login_clicked(self, payload: dict):
         """
