@@ -51,8 +51,7 @@ class PasswordHistory(Base):
 
     password = relationship("Password", back_populates="history")
 
-# Note: your schema.sql uses `otp_codes`, while other code mentions verification_codes.
-# We'll stick to `otp_codes` to match the DB and adjust code accordingly.
+
 class OTPCode(Base):
     __tablename__ = "otp_codes"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

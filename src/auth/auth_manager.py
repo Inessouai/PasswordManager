@@ -2,19 +2,40 @@
 # auth_manager.py - Updated with proper password hashing
 
 import os
+import builtins
 from pathlib import Path
 import random
 import string
 import secrets
 import smtplib
+import ssl
 import hashlib
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from database.engine import SessionLocal
-from database.models import User, OTPCode, ActivityLog, TrustedDevice, RecoveryCode
+from database.models import (
+    User,
+    OTPCode,
+    ActivityLog,
+    TrustedDevice,
+    RecoveryCode,
+    Session,
+    UserDevice,
+)
 from sqlalchemy import select, update
+
+
+def _safe_print(*args, **kwargs):
+    try:
+        builtins.print(*args, **kwargs)
+    except UnicodeEncodeError:
+        safe_args = [str(a).encode("ascii", "replace").decode("ascii") for a in args]
+        builtins.print(*safe_args, **kwargs)
+
+
+print = _safe_print  # type: ignore
 
 
 # ----------------- Password Hashing -----------------
@@ -67,20 +88,38 @@ class AuthManager:
         try:
             if not self.email_cfg.get("sender_email") or not self.email_cfg.get("sender_password"):
                 raise RuntimeError("SMTP credentials missing. Check SMTP_USER / SMTP_PASSWORD in .env.")
+            if not to_email:
+                raise RuntimeError("Recipient email is empty.")
             msg = MIMEMultipart('alternative')
             msg['From'] = f"{self.email_cfg['sender_name']} <{self.email_cfg['sender_email']}>"
             msg['To'] = to_email
             msg['Subject'] = subject
+            if self.email_cfg.get("reply_to"):
+                msg['Reply-To'] = self.email_cfg["reply_to"]
             msg.attach(MIMEText(body, 'html' if html else 'plain'))
-            
+
+            timeout = int(self.email_cfg.get("timeout", 20))
             if self.email_cfg.get("use_ssl"):
-                s = smtplib.SMTP_SSL(self.email_cfg["smtp_server"], self.email_cfg["smtp_port"])
+                with smtplib.SMTP_SSL(
+                    self.email_cfg["smtp_server"],
+                    self.email_cfg["smtp_port"],
+                    timeout=timeout,
+                    context=ssl.create_default_context(),
+                ) as s:
+                    s.login(self.email_cfg["sender_email"], self.email_cfg["sender_password"])
+                    s.send_message(msg)
             else:
-                s = smtplib.SMTP(self.email_cfg["smtp_server"], self.email_cfg["smtp_port"])
-                s.starttls()
-            s.login(self.email_cfg["sender_email"], self.email_cfg["sender_password"])
-            s.send_message(msg)
-            s.quit()
+                with smtplib.SMTP(
+                    self.email_cfg["smtp_server"],
+                    self.email_cfg["smtp_port"],
+                    timeout=timeout,
+                ) as s:
+                    s.ehlo()
+                    if self.email_cfg.get("use_starttls"):
+                        s.starttls(context=ssl.create_default_context())
+                        s.ehlo()
+                    s.login(self.email_cfg["sender_email"], self.email_cfg["sender_password"])
+                    s.send_message(msg)
             
             print(f"✅ Email sent to {to_email}")
             return True
@@ -103,13 +142,27 @@ class AuthManager:
                 return default
             return val.strip().lower() in {"1", "true", "yes", "y", "on"}
 
+        def _first_env(*names: str, default: str = "") -> str:
+            for name in names:
+                value = os.getenv(name)
+                if value is not None and str(value).strip() != "":
+                    return str(value).strip().strip("\"' ")
+            return default
+
+        smtp_port = int(_first_env("SMTP_PORT", default="587"))
+        use_ssl = _get_bool("SMTP_USE_SSL", smtp_port == 465)
+        use_starttls = _get_bool("SMTP_USE_STARTTLS", (not use_ssl and smtp_port in (587, 25)))
+
         return {
-            "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
-            "smtp_port": int(os.getenv("SMTP_PORT", "587")),
-            "sender_email": os.getenv("SMTP_USER", ""),
-            "sender_password": os.getenv("SMTP_PASSWORD", ""),
-            "sender_name": os.getenv("SMTP_FROM_NAME", "Password Guardian"),
-            "use_ssl": _get_bool("SMTP_USE_SSL", False),
+            "smtp_server": _first_env("SMTP_SERVER", "SMTP_HOST", default="smtp.gmail.com"),
+            "smtp_port": smtp_port,
+            "sender_email": _first_env("SMTP_USER", "SMTP_FROM_EMAIL"),
+            "sender_password": _first_env("SMTP_PASSWORD"),
+            "sender_name": _first_env("SMTP_FROM_NAME", default="Password Guardian"),
+            "reply_to": _first_env("SMTP_REPLY_TO"),
+            "use_ssl": use_ssl,
+            "use_starttls": use_starttls,
+            "timeout": int(_first_env("SMTP_TIMEOUT", default="20")),
         }
 
     def _gen_code(self, n=6) -> str:
@@ -170,7 +223,7 @@ class AuthManager:
 
     # ------------ DB ops ------------
     def _user_by_email(self, email: str) -> dict | None:
-        k = self._key(email)
+        k = self._key(email) # thawes f database ela user b email taeo if laqo treturni info taweo 
         with SessionLocal() as s:
             row = s.execute(select(User).where(User.email == k)).first()
             if not row:
@@ -183,6 +236,9 @@ class AuthManager:
                 "password_hash": u.password_hash,
                 "salt": u.salt,
                 "email_verified": u.email_verified,
+                "mfa_enabled": bool(u.mfa_enabled),
+                "totp_enabled": bool(u.totp_enabled),
+                "totp_secret": u.totp_secret,
             }
 
     def _set_password(self, email: str, new_password: str) -> bool:
@@ -236,11 +292,17 @@ class AuthManager:
                 "user_id": user_id,
             }
             
-            self._send_mail(
+            sent = self._send_mail(
                 email,
                 "Vérification de votre compte – Password Guardian",
                 f"Bonjour {username},\n\nVotre code: {code}\n\nExpire dans 15 min.\n\nPassword Guardian"
             )
+            if not sent:
+                return (
+                    False,
+                    "❌ Impossible d'envoyer l'email de vérification. Vérifiez SMTP_USER / SMTP_PASSWORD / SMTP_PORT / SMTP_USE_SSL.",
+                    {"user_id": user_id, "email": k},
+                )
             
             print(f"[DEV] Registration code for {k}: {code}")
             return True, "✅ Code de vérification envoyé à votre e-mail.", {"user_id": user_id, "email": k}
@@ -275,7 +337,7 @@ class AuthManager:
         return True
 
     def authenticate(self, email: str, password: str, send_2fa: bool = True) -> dict:
-        """Authenticate user with password hashing verification"""
+        """Authenticate user and enforce MFA (TOTP or email OTP)."""
         try:
             u = self._user_by_email(email)
             
@@ -310,21 +372,49 @@ class AuthManager:
                 }
 
             self._last_password = password
+            totp_enabled = bool(u.get("totp_enabled") and u.get("totp_secret"))
+
+            if totp_enabled:
+                trusted = False
+                try:
+                    trusted = self.is_device_trusted(u["id"])
+                except Exception:
+                    trusted = False
+
+                if trusted:
+                    self._record_device_session(u["id"])
+                else:
+                    return {
+                        "error": None,
+                        "2fa_sent": False,
+                        "mfa_required": True,
+                        "mfa_method": "totp",
+                        "user": {
+                            "id": u["id"],
+                            "username": u["username"],
+                            "email": u["email"],
+                            "salt": u["salt"],
+                            "mfa_enabled": bool(u.get("mfa_enabled")),
+                            "totp_enabled": True,
+                        },
+                    }
 
             sent = False
             if send_2fa:
-                sent = self.send_2fa_code(email, u['id'], "login")
+                sent = self.send_2fa_code(email, u["id"], "login")
             # If 2FA is not used or could not be sent, record device/session now
             if not send_2fa or not sent:
                 self._record_device_session(u["id"])
             return {
                 "error": None,
                 "2fa_sent": sent,
+                "mfa_required": False,
                 "user": {
-                    "id": u['id'],
-                    "username": u['username'],
-                    "email": u['email'],
-                    "salt": u['salt'],
+                    "id": u["id"],
+                    "username": u["username"],
+                    "email": u["email"],
+                    "salt": u["salt"],
+                    "mfa_enabled": bool(u.get("mfa_enabled")),
                     "totp_enabled": bool(u.get("totp_enabled")),
                 }
             }
@@ -485,7 +575,7 @@ class AuthManager:
             "user_id": u['id'],
         }
         
-        self._send_mail(
+        sent = self._send_mail(
             email,
             "Vérification de votre compte – Password Guardian",
             f"Bonjour {u['username']},\n\n"
@@ -493,9 +583,54 @@ class AuthManager:
             f"Ce code expire dans 15 minutes.\n\n"
             f"Password Guardian"
         )
+        if not sent:
+            return False
         
         print(f"[DEV] New verification code for {k}: {code}")
         return True
+
+    def change_unverified_email(self, current_email: str, new_email: str) -> tuple[bool, str, str | None]:
+        """Change email for an unverified account, then resend verification code."""
+        old_k = self._key(current_email)
+        new_k = self._key(new_email)
+
+        if not isinstance(new_k, str) or "@" not in new_k or "." not in new_k:
+            return False, "❌ Nouvelle adresse email invalide.", None
+
+        with SessionLocal() as s:
+            user = s.execute(select(User).where(User.email == old_k)).scalar_one_or_none()
+            if not user:
+                return False, "❌ Compte introuvable.", None
+            if bool(user.email_verified):
+                return False, "❌ Cet email est déjà vérifié.", None
+
+            exists = (
+                s.execute(select(User).where(User.email == new_k).where(User.id != user.id))
+                .scalar_one_or_none()
+            )
+            if exists:
+                return False, "❌ Cet e-mail est déjà utilisé.", None
+
+            user.email = new_k
+            s.commit()
+
+        pending_entry = self.pending_verify.pop(old_k, None)
+        if pending_entry:
+            self.pending_verify[new_k] = pending_entry
+
+        sent = self.resend_verification_code(new_k)
+        if not sent:
+            with SessionLocal() as s:
+                user = s.execute(select(User).where(User.email == new_k)).scalar_one_or_none()
+                if user:
+                    user.email = old_k
+                    s.commit()
+            if pending_entry:
+                self.pending_verify.pop(new_k, None)
+                self.pending_verify[old_k] = pending_entry
+            return False, "❌ Changement effectué mais envoi impossible. Vérifiez la config SMTP.", None
+
+        return True, "✅ Email mis à jour. Nouveau code envoyé.", new_k
 
     # ---------- Audit logs ----------
     def list_audit_logs(self, user_id: int, filter_key: str = "all") -> list[dict]:
@@ -524,6 +659,9 @@ class AuthManager:
             self.mfa_enabled_emails.discard(k)
 
     def is_mfa_enabled(self, email: str) -> bool:
+        u = self._user_by_email(email)
+        if u:
+            return bool(u.get("mfa_enabled") or u.get("totp_enabled"))
         return self._key(email) in self.mfa_enabled_emails
 
     def is_totp_enabled(self, email: str) -> bool:

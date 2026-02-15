@@ -1,4 +1,4 @@
-# start_securevault.py
+
 import os, sys, types, traceback
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel
 from PyQt5.QtCore import Qt

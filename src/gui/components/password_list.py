@@ -204,10 +204,10 @@ class PasswordCard(QFrame):
         dots = QLabel("• • • • • • • • • •")
         dots.setStyleSheet(f"""
             color: {Styles.BLUE_SECONDARY};
-            font-size: 16px;
-            font-family: 'Courier New', monospace;
+           font-size: 16px;
+           font-family: 'Courier New', monospace;
             letter-spacing: 3px;
-            font-weight: bold;
+           font-weight: bold;
             background: transparent;
         """)
         pwl.addWidget(dots)
@@ -275,6 +275,8 @@ class PasswordCard(QFrame):
         cat_lbl = QLabel(f"{icons.get(cat, '🔒')} {cat_labels.get(cat, cat.capitalize())}")
         cat_lbl.setStyleSheet(f"color:{Styles.TEXT_MUTED}; font-size:10px; background:transparent;")
         footer.addWidget(cat_lbl)
+        
+        
 
         # Date
         last_updated = self.password_data.get('last_updated', '')
@@ -404,7 +406,7 @@ class PasswordList(QWidget):
         header.addWidget(search_wrap)
         main.addLayout(header)
 
-        # Scroll area (vertical only)
+        # Scroll area 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

@@ -12,6 +12,7 @@ import random, string, re
 from datetime import datetime
 from src.auth.auth_manager import AuthManager, verify_password
 from src.backend.api_client import APIClient
+from src.security.password_tools import check_pwned_password
 from src.gui.styles.styles import Styles
 try:
     from src.security.audit import log_action
@@ -606,33 +607,26 @@ class RegisterModal(QDialog):
         if pwd != cpwd:
             QMessageBox.warning(self, "Erreur", "Les mots de passe ne correspondent pas")
             return
-        # ✅ NOUVEAU : Vérifier si le mot de passe est compromis
-        try:
-            import requests  # Ajoute l'import si pas déjà présent
-            response = requests.post("http://127.0.0.1:5000/check-password", json={"password": pwd}, timeout=3)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("is_compromised"):
-                    # Crée un message détaillé
-                    message = (
-                        f"⚠️ MOT DE PASSE COMPROMIS !\n\n"
-                        f"Ce mot de passe a été trouvé dans {data['breach_count']:,} fuites de données !\n\n"
-                        f"Force: {data['strength'].upper()}\n"
-                        f"Longueur: {data['length']} caractères\n\n"
-                        f"Recommandation: {data['recommendation']}\n\n"
-                        f"Voulez-vous vraiment utiliser ce mot de passe ?"
-                    )
-                    reply = QMessageBox.critical(
-                        self,
-                        "ALERTE DE SÉCURITÉ",
-                        message,
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No
-                    )
-                    if reply == QMessageBox.No:
-                        return
-        except Exception as e:
-            print(f"⚠️ Impossible de vérifier le mot de passe: {e}")
+        # Vérification HIBP avec k-anonymity (préfixe SHA1 5 caractères uniquement)
+        compromised, breach_count = check_pwned_password(pwd, timeout=3)
+        if compromised:
+            message = (
+                f"⚠️ MOT DE PASSE COMPROMIS !\n\n"
+                f"Ce mot de passe a été trouvé dans {breach_count:,} fuites de données.\n\n"
+                "Confidentialité préservée (k-anonymity):\n"
+                "• Seuls les 5 premiers caractères du hash SHA1 sont envoyés\n"
+                "• La comparaison complète est faite localement\n\n"
+                "Voulez-vous vraiment utiliser ce mot de passe ?"
+            )
+            reply = QMessageBox.critical(
+                self,
+                "ALERTE DE SÉCURITÉ",
+                message,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
 
         strength, _, _ = PasswordStrengthChecker.check_strength(pwd)
         if strength == "weak":
@@ -1051,34 +1045,26 @@ class AddPasswordModal(QDialog):
         if not pwd:
             QMessageBox.warning(self, "Erreur", "Veuillez saisir un mot de passe")
             return
-        # ✅ NOUVEAU : Vérifier si le mot de passe est compromis
-        try:
-            import requests  # Ajoute l'import si pas déjà présent
-            response = requests.post("http://127.0.0.1:5000/check-password", json={"password": pwd}, timeout=3)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("is_compromised"):
-                    # Crée un message détaillé
-                    message = (
-
-                        f"⚠️ MOT DE PASSE COMPROMIS !\n\n"
-                        f"Ce mot de passe a été trouvé dans {data['breach_count']:,} fuites de données !\n\n"
-                        f"Force: {data['strength'].upper()}\n"
-                        f"Longueur: {data['length']} caractères\n\n"
-                        f"Recommandation: {data['recommendation']}\n\n"
-                        f"Voulez-vous vraiment utiliser ce mot de passe ?"
-                    )
-                    reply = QMessageBox.critical(
-                        self,
-                        "ALERTE DE SÉCURITÉ",
-                        message,
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No
-                    )
-                    if reply == QMessageBox.No:
-                        return
-        except Exception as e:
-            print(f"⚠️ Impossible de vérifier le mot de passe: {e}")
+        # Vérification HIBP avec k-anonymity (préfixe SHA1 5 caractères uniquement)
+        compromised, breach_count = check_pwned_password(pwd, timeout=3)
+        if compromised:
+            message = (
+                f"⚠️ MOT DE PASSE COMPROMIS !\n\n"
+                f"Ce mot de passe a été trouvé dans {breach_count:,} fuites de données.\n\n"
+                "Confidentialité préservée (k-anonymity):\n"
+                "• Seuls les 5 premiers caractères du hash SHA1 sont envoyés\n"
+                "• La comparaison complète est faite localement\n\n"
+                "Voulez-vous vraiment utiliser ce mot de passe ?"
+            )
+            reply = QMessageBox.critical(
+                self,
+                "ALERTE DE SÉCURITÉ",
+                message,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
 
             # Extract site name from URL
         site_name = url
@@ -1439,10 +1425,11 @@ class EditPasswordModal(QDialog):
 class TwoFactorModal(QDialog):
     code_verified = pyqtSignal()
 
-    def __init__(self, email, sent_code, parent=None):
+    def __init__(self, email, sent_code, parent=None, method: str = "email"):
         super().__init__(parent)
         self.email = email
         self.sent_code = sent_code
+        self.method = (method or "email").lower()
         self.setWindowTitle("Vérification en deux étapes")
         self.setFixedSize(400, 250)
         self.init_ui()
@@ -1464,13 +1451,19 @@ class TwoFactorModal(QDialog):
         title.setStyleSheet(Styles.get_label_style(20))
         layout.addWidget(title)
 
-        info = QLabel(f"Un code à 6 chiffres a été envoyé à {self.email}")
+        if self.method == "totp":
+            info_text = "Entrez le code à 6 chiffres de votre application d'authentification"
+            placeholder = "Code de l'app d'authentification"
+        else:
+            info_text = f"Un code à 6 chiffres a été envoyé à {self.email}"
+            placeholder = "Entrez le code reçu par email"
+        info = QLabel(info_text)
         info.setStyleSheet(Styles.get_label_style(13, Styles.TEXT_SECONDARY) + "; background: transparent;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
         self.code_input = QLineEdit()
-        self.code_input.setPlaceholderText("Entrez le code reçu par email")
+        self.code_input.setPlaceholderText(placeholder)
         self.code_input.setMaxLength(6)
         self.code_input.setAlignment(Qt.AlignCenter)
         style_line_edit(self.code_input)
@@ -1864,27 +1857,68 @@ class EditProfileModal(QDialog):
         self.auth = auth_manager
         self.api_client = APIClient("http://127.0.0.1:5000")
         self.setWindowTitle("Modifier le profil")
-        self.setFixedSize(520, 700)
+        self.setFixedSize(580, 740)
         self.setModal(True)
         self._build()
 
     def _build(self):
         self.setStyleSheet(f"""
             QDialog {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {Styles.PRIMARY_BG}, stop:1 {Styles.SECONDARY_BG});
-                border: 1px solid rgba(255,255,255,0.12);
-                border-radius: 20px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #07111f,
+                    stop:0.5 #0b1a2f,
+                    stop:1 #122744
+                );
+                border: 1px solid rgba(148, 163, 184, 0.28);
+                border-radius: 22px;
             }}
             QLabel {{ color: {Styles.TEXT_PRIMARY}; background: transparent; }}
             QPushButton {{
                 border-radius: 14px;
                 padding: 8px 14px;
             }}
+            QFrame#profileHeader {{
+                background: rgba(15, 23, 42, 0.58);
+                border: 1px solid rgba(96, 165, 250, 0.32);
+                border-radius: 16px;
+            }}
+            QFrame#profileCard {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(30, 41, 59, 0.92),
+                    stop:1 rgba(51, 65, 85, 0.90)
+                );
+                border: 1px solid rgba(148, 163, 184, 0.24);
+                border-radius: 16px;
+            }}
+            QLineEdit {{
+                background: rgba(15, 23, 42, 0.76);
+                border: 1px solid rgba(96, 165, 250, 0.34);
+                border-radius: 12px;
+                padding: 10px 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid rgba(96, 165, 250, 0.78);
+                background: rgba(15, 23, 42, 0.95);
+            }}
         """)
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
+        root.setContentsMargins(22, 20, 22, 20)
         root.setSpacing(12)
+
+        profile_header = QFrame()
+        profile_header.setObjectName("profileHeader")
+        profile_header_l = QVBoxLayout(profile_header)
+        profile_header_l.setContentsMargins(14, 12, 14, 12)
+        profile_header_l.setSpacing(4)
+        title = QLabel("Profil & securite")
+        title.setStyleSheet("color:#f8fafc; font-size:20px; font-weight:700;")
+        subtitle = QLabel("Mettez a jour votre identite, mot de passe et MFA.")
+        subtitle.setStyleSheet("color:#a5b4fc; font-size:12px;")
+        profile_header_l.addWidget(title)
+        profile_header_l.addWidget(subtitle)
+        root.addWidget(profile_header)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1913,31 +1947,38 @@ class EditProfileModal(QDialog):
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 10, 0)
+        content_layout.setContentsMargins(0, 0, 6, 0)
         content_layout.setSpacing(12)
 
-        title = QLabel("Profil")
-        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        content_layout.addWidget(title)
+        info_card = QFrame()
+        info_card.setObjectName("profileCard")
+        info_l = QVBoxLayout(info_card)
+        info_l.setContentsMargins(14, 12, 14, 12)
+        info_l.setSpacing(10)
+        info_title = QLabel("Informations du compte")
+        info_title.setStyleSheet("color:#f8fafc; font-size:14px; font-weight:700;")
+        info_l.addWidget(info_title)
 
-        def labeled_input(label, placeholder, value="", is_pwd=False):
+        def labeled_input(target_layout, label, placeholder, value="", is_pwd=False):
             lab = QLabel(label)
-            lab.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
-            content_layout.addWidget(lab)
+            lab.setStyleSheet("color:#cbd5e1; font-size:12px;")
+            target_layout.addWidget(lab)
             inp = QLineEdit()
             inp.setPlaceholderText(placeholder)
             inp.setText(value or "")
             if is_pwd:
                 inp.setEchoMode(QLineEdit.Password)
-            style_line_edit(inp)
-            content_layout.addWidget(inp)
+            inp.setMinimumHeight(44)
+            inp.setFont(QFont("Segoe UI", 11))
+            target_layout.addWidget(inp)
             return inp
 
-        self.name_input = labeled_input("Nom complet", "Votre nom", self.user_data.get('username') or self.user_data.get('name', ''))
-        self.email_input = labeled_input("Email", "email", self.user_data.get('email', ''))
-        self.current_pwd_input = labeled_input("Mot de passe actuel", "Mot de passe actuel", "", True)
-        self.new_pwd_input = labeled_input("Nouveau mot de passe", "Optionnel", "", True)
-        self.confirm_pwd_input = labeled_input("Confirmer", "Confirmer le mot de passe", "", True)
+        self.name_input = labeled_input(info_l, "Nom complet", "Votre nom", self.user_data.get('username') or self.user_data.get('name', ''))
+        self.email_input = labeled_input(info_l, "Email", "email", self.user_data.get('email', ''))
+        self.current_pwd_input = labeled_input(info_l, "Mot de passe actuel", "Mot de passe actuel", "", True)
+        self.new_pwd_input = labeled_input(info_l, "Nouveau mot de passe", "Optionnel", "", True)
+        self.confirm_pwd_input = labeled_input(info_l, "Confirmer", "Confirmer le mot de passe", "", True)
+        content_layout.addWidget(info_card)
 
         # MFA card
         enabled = bool(self.user_data.get('mfa_enabled'))
@@ -1948,26 +1989,20 @@ class EditProfileModal(QDialog):
                 pass
 
         mfa_card = QFrame()
-        mfa_card.setStyleSheet("""
-            QFrame {
-                background: rgba(255,255,255,0.03);
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 14px;
-            }
-        """)
+        mfa_card.setObjectName("profileCard")
         mfa_layout = QVBoxLayout(mfa_card)
         mfa_layout.setContentsMargins(14, 12, 14, 12)
         mfa_layout.setSpacing(10)
 
         header = QHBoxLayout()
-        sec = QLabel("Securite")
-        sec.setStyleSheet(f"color:{Styles.BLUE_SECONDARY}; font-size:13px; font-weight:bold;")
+        sec = QLabel("Securite MFA")
+        sec.setStyleSheet("color:#93c5fd; font-size:14px; font-weight:700;")
         header.addWidget(sec)
         header.addStretch()
-        self.mfa_status = QLabel("MFA: active" if enabled else "MFA: desactive")
+        self.mfa_status = QLabel("MFA active" if enabled else "MFA desactivee")
         self.mfa_status.setStyleSheet(
-            "color:#e2e8f0; font-size:11px; padding:4px 8px; "
-            "background: rgba(59,130,246,0.15); border-radius: 8px;"
+            "color:#e2e8f0; font-size:11px; padding:4px 10px; font-weight:600;"
+            "background: rgba(59,130,246,0.15); border:1px solid rgba(96,165,250,0.35); border-radius: 10px;"
         )
         header.addWidget(self.mfa_status)
         mfa_layout.addLayout(header)
@@ -2042,8 +2077,21 @@ class EditProfileModal(QDialog):
         root.addWidget(scroll, 1)
 
         btn = QPushButton("Enregistrer")
-        btn.setStyleSheet(Styles.get_button_style(primary=True))
-        btn.setMinimumHeight(46)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563eb, stop:1 #3b82f6);
+                color: #eff6ff;
+                border: 1px solid rgba(147, 197, 253, 0.55);
+                border-radius: 14px;
+                padding: 10px 16px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4ed8, stop:1 #2563eb);
+            }
+        """)
+        btn.setMinimumHeight(44)
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(self.on_save)
         root.addWidget(btn)
@@ -2390,21 +2438,53 @@ class EditProfileModal(QDialog):
 class DeviceSessionsModal(QDialog):
     def __init__(self, sessions: list[dict], on_revoke_session, on_revoke_device, parent=None):
         super().__init__(parent)
-        self.sessions = sessions or []
+        self.sessions = self._normalize_sessions(sessions or [])
         self.on_revoke_session = on_revoke_session
         self.on_revoke_device = on_revoke_device
         self.setWindowTitle("Appareils & sessions")
-        self.setFixedSize(560, 520)
+        self.setFixedSize(620, 560)
         self.setModal(True)
         self._build()
+
+    @staticmethod
+    def _normalize_sessions(sessions: list[dict]) -> list[dict]:
+        normalized = []
+        for raw in sessions:
+            if not isinstance(raw, dict):
+                continue
+            device_name = (raw.get("device_name") or raw.get("device_info") or "").strip()
+            session_id = raw.get("id")
+            ip_address = (raw.get("ip_address") or "").strip()
+            last_used = raw.get("last_used") or raw.get("created_at")
+            status = (raw.get("status") or "").strip()
+
+            if not device_name:
+                device_name = "Appareil inconnu"
+            if not status:
+                status = "Actif" if session_id else "Historique"
+
+            normalized.append(
+                {
+                    "device_name": device_name,
+                    "ip_address": ip_address or "-",
+                    "id": session_id,
+                    "status": status,
+                    "last_used": last_used,
+                }
+            )
+        return normalized
 
     def _build(self):
         self.setStyleSheet(f"""
             QDialog {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {Styles.PRIMARY_BG}, stop:1 {Styles.SECONDARY_BG});
-                border: 1px solid rgba(255,255,255,0.12);
-                border-radius: 18px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #07111f,
+                    stop:0.5 #0b1a2f,
+                    stop:1 #122744
+                );
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                border-radius: 20px;
             }}
             QLabel {{ color: {Styles.TEXT_PRIMARY}; background: transparent; }}
             QScrollArea {{
@@ -2414,19 +2494,51 @@ class DeviceSessionsModal(QDialog):
             QScrollArea::viewport {{
                 background: transparent;
             }}
+            QScrollBar:vertical {{
+                background: rgba(255,255,255,0.03);
+                width: 10px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(96, 165, 250, 0.40);
+                border-radius: 5px;
+                min-height: 24px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
             QFrame#sessionRow {{
-                background: rgba(255,255,255,0.05);
-                border: 1px solid rgba(255,255,255,0.10);
-                border-radius: 18px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(30, 41, 59, 0.92),
+                    stop:1 rgba(51, 65, 85, 0.92)
+                );
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                border-radius: 16px;
+            }}
+            QFrame#headerCard {{
+                background: rgba(15, 23, 42, 0.55);
+                border: 1px solid rgba(96, 165, 250, 0.30);
+                border-radius: 16px;
             }}
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
-        title = QLabel("Appareils connectés")
-        title.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:17px; font-weight:bold;")
-        layout.addWidget(title)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        header = QFrame()
+        header.setObjectName("headerCard")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(16, 14, 16, 14)
+        header_layout.setSpacing(4)
+        title = QLabel("Appareils connectes")
+        title.setStyleSheet("color:#f8fafc; font-size:19px; font-weight:700;")
+        subtitle = QLabel("Gerez les sessions actives et l'historique de connexion.")
+        subtitle.setStyleSheet("color:#a5b4fc; font-size:12px;")
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        layout.addWidget(header)
 
         list_container = QWidget()
         list_container.setObjectName("devicesList")
@@ -2434,26 +2546,35 @@ class DeviceSessionsModal(QDialog):
         list_container.setAttribute(Qt.WA_StyledBackground, True)
         list_layout = QVBoxLayout(list_container)
         list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(8)
+        list_layout.setSpacing(10)
 
         def _format_last_used(value):
             if not value:
-                return "-"
+                return "Inconnue"
             try:
-                return datetime.fromisoformat(str(value)).strftime("%Y-%m-%d %H:%M")
+                return datetime.fromisoformat(str(value)).strftime("%d/%m/%Y %H:%M")
             except Exception:
                 return str(value)
 
         if not self.sessions:
-            empty = QLabel("Aucun appareil.")
-            empty.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+            empty = QFrame()
+            empty.setObjectName("sessionRow")
+            empty_layout = QVBoxLayout(empty)
+            empty_layout.setContentsMargins(16, 16, 16, 16)
+            empty_layout.setSpacing(6)
+            empty_title = QLabel("Aucun appareil detecte")
+            empty_title.setStyleSheet("color:#e2e8f0; font-size:14px; font-weight:600;")
+            empty_sub = QLabel("Les prochaines connexions apparaitront ici.")
+            empty_sub.setStyleSheet("color:#94a3b8; font-size:12px;")
+            empty_layout.addWidget(empty_title)
+            empty_layout.addWidget(empty_sub)
             list_layout.addWidget(empty)
         else:
             for sess in self.sessions:
                 row = QFrame()
                 row.setObjectName("sessionRow")
                 row_layout = QHBoxLayout(row)
-                row_layout.setContentsMargins(16, 12, 16, 12)
+                row_layout.setContentsMargins(14, 12, 14, 12)
                 row_layout.setSpacing(12)
 
                 device = sess.get("device_name") or sess.get("device_info") or "Inconnu"
@@ -2464,11 +2585,11 @@ class DeviceSessionsModal(QDialog):
                 left = QVBoxLayout()
                 left.setSpacing(4)
                 device_lbl = QLabel(device)
-                device_lbl.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:12px; font-weight:600;")
+                device_lbl.setStyleSheet("color:#f8fafc; font-size:13px; font-weight:700;")
                 left.addWidget(device_lbl)
 
-                meta = QLabel(f"{ip}  -  Derniere activite: {_format_last_used(last_used)}")
-                meta.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:11px;")
+                meta = QLabel(f"IP {ip}  -  Derniere activite: {_format_last_used(last_used)}")
+                meta.setStyleSheet("color:#cbd5e1; font-size:11px;")
                 left.addWidget(meta)
 
                 left_wrap = QWidget()
@@ -2477,15 +2598,39 @@ class DeviceSessionsModal(QDialog):
                 row_layout.addWidget(left_wrap, 1)
 
                 status_lbl = QLabel(status)
+                is_active = str(status).lower() == "actif"
                 status_lbl.setStyleSheet(
-                    f"color:{Styles.TEXT_SECONDARY}; font-size:11px; padding:6px 10px; "
-                    "border-radius:12px; background: rgba(255,255,255,0.08);"
+                    "font-size:11px; padding:6px 10px; border-radius:12px; font-weight:600; "
+                    + (
+                        "color:#bbf7d0; background: rgba(22, 163, 74, 0.20); border: 1px solid rgba(22, 163, 74, 0.35);"
+                        if is_active
+                        else "color:#cbd5e1; background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.25);"
+                    )
                 )
                 row_layout.addWidget(status_lbl)
 
-                revoke_btn = QPushButton("Déconnecter")
-                revoke_btn.setStyleSheet(Styles.get_button_style(primary=False) + "border-radius: 14px;")
-                revoke_btn.setMinimumHeight(36)
+                revoke_btn = QPushButton("Deconnecter")
+                revoke_btn.setStyleSheet("""
+                    QPushButton {
+                        background: rgba(239, 68, 68, 0.16);
+                        color: #fecaca;
+                        border: 1px solid rgba(248, 113, 113, 0.40);
+                        border-radius: 12px;
+                        padding: 8px 12px;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }
+                    QPushButton:hover {
+                        background: rgba(239, 68, 68, 0.25);
+                        color: #fee2e2;
+                    }
+                    QPushButton:disabled {
+                        color: rgba(255,255,255,0.45);
+                        border-color: rgba(255,255,255,0.10);
+                        background: rgba(255,255,255,0.05);
+                    }
+                """)
+                revoke_btn.setMinimumHeight(34)
                 revoke_btn.setCursor(Qt.PointingHandCursor)
 
                 session_id = sess.get("id")
@@ -2504,17 +2649,43 @@ class DeviceSessionsModal(QDialog):
                 row_layout.addWidget(revoke_btn)
                 list_layout.addWidget(row)
 
-        layout.addWidget(list_container, 1)
+        list_layout.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(list_container)
+        layout.addWidget(scroll, 1)
 
         close_btn = QPushButton("Fermer")
-        close_btn.setStyleSheet(Styles.get_button_style(primary=False) + "border-radius: 16px;")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #2563eb,
+                    stop:1 #3b82f6
+                );
+                color: #eff6ff;
+                border: 1px solid rgba(147, 197, 253, 0.55);
+                border-radius: 14px;
+                padding: 10px 16px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #1d4ed8,
+                    stop:1 #2563eb
+                );
+            }
+        """)
         close_btn.setMinimumHeight(42)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
     def _revoke_session(self, session_id: int, row_widget: QWidget):
         if not session_id:
-            QMessageBox.information(self, "Sessions", "Aucune session ? révoquer.")
+            QMessageBox.information(self, "Sessions", "Aucune session a revoquer.")
             return
         ok = False
         try:
@@ -2523,9 +2694,9 @@ class DeviceSessionsModal(QDialog):
             ok = False
         if ok:
             row_widget.setParent(None)
-            QMessageBox.information(self, "Sessions", "Session révoquée.")
+            QMessageBox.information(self, "Sessions", "Session revoquee.")
         else:
-            QMessageBox.warning(self, "Erreur", "Impossible de révoquer la session.")
+            QMessageBox.warning(self, "Erreur", "Impossible de revoquer la session.")
 
     def _revoke_device(self, device_name: str, row_widget: QWidget):
         if not device_name:
@@ -2537,9 +2708,9 @@ class DeviceSessionsModal(QDialog):
             ok = False
         if ok:
             row_widget.setParent(None)
-            QMessageBox.information(self, "Appareils", "Appareil déconnecté.")
+            QMessageBox.information(self, "Appareils", "Appareil deconnecte.")
         else:
-            QMessageBox.warning(self, "Erreur", "Impossible de déconnecter l'appareil.")
+            QMessageBox.warning(self, "Erreur", "Impossible de deconnecter l'appareil.")
 
 class AuditLogModal(QDialog):
     def __init__(self, user_id: int, auth_manager: AuthManager, parent=None):
@@ -2547,45 +2718,85 @@ class AuditLogModal(QDialog):
         self.user_id = user_id
         self.auth = auth_manager
         self.setWindowTitle("Journal")
-        self.setFixedSize(720, 520)
+        self.setFixedSize(760, 560)
         self.setModal(True)
         self._build()
 
     def _build(self):
         self.setStyleSheet(f"""
             QDialog {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {Styles.PRIMARY_BG}, stop:1 {Styles.SECONDARY_BG});
-                border: 1px solid rgba(255,255,255,0.12);
-                border-radius: 18px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #07111f,
+                    stop:0.5 #0b1a2f,
+                    stop:1 #122744
+                );
+                border: 1px solid rgba(148,163,184,0.24);
+                border-radius: 20px;
             }}
             QLabel {{ color: {Styles.TEXT_PRIMARY}; background: transparent; }}
-            QScrollArea {{
-                background: transparent;
-                border: none;
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollArea::viewport {{ background: transparent; }}
+            QFrame#journalHeader {{
+                background: rgba(15, 23, 42, 0.58);
+                border: 1px solid rgba(96, 165, 250, 0.32);
+                border-radius: 16px;
             }}
-            QScrollArea::viewport {{
-                background: transparent;
+            QFrame#journalCard {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(30, 41, 59, 0.92),
+                    stop:1 rgba(51, 65, 85, 0.90)
+                );
+                border: 1px solid rgba(148, 163, 184, 0.24);
+                border-radius: 14px;
             }}
         """)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
+        root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
 
-        header = QHBoxLayout()
+        header_card = QFrame()
+        header_card.setObjectName("journalHeader")
+        header = QVBoxLayout(header_card)
+        header.setContentsMargins(14, 12, 14, 12)
+        header.setSpacing(4)
         title = QLabel("Journal d'audit")
-        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        title.setStyleSheet("color:#f8fafc; font-size:20px; font-weight:700;")
+        subtitle = QLabel("Suivez les connexions, modifications et actions sensibles.")
+        subtitle.setStyleSheet("color:#a5b4fc; font-size:12px;")
         header.addWidget(title)
-        header.addStretch()
-        root.addLayout(header)
+        header.addWidget(subtitle)
+        root.addWidget(header_card)
 
         bar = QHBoxLayout()
         bar.setSpacing(10)
+        filter_lbl = QLabel("Filtrer")
+        filter_lbl.setStyleSheet("color:#cbd5e1; font-size:12px;")
+        bar.addWidget(filter_lbl)
+
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["Tous", "Connexions", "Changements", "Exports", "Echecs"])
-        self.filter_combo.setMinimumHeight(36)
-        self.filter_combo.setStyleSheet(Styles.get_input_style())
+        self.filter_combo.setMinimumHeight(34)
+        self.filter_combo.setStyleSheet("""
+            QComboBox {
+                background: rgba(15, 23, 42, 0.76);
+                border: 1px solid rgba(96, 165, 250, 0.34);
+                border-radius: 10px;
+                color: #e2e8f0;
+                padding: 6px 10px;
+                min-width: 180px;
+            }
+            QComboBox:focus { border: 1px solid rgba(96, 165, 250, 0.78); }
+            QComboBox::drop-down { width: 18px; border: none; }
+            QComboBox QAbstractItemView {
+                background: #0f1e36;
+                color: #e6effb;
+                selection-background-color: rgba(59,130,246,0.35);
+                border: 1px solid rgba(255,255,255,0.1);
+            }
+        """)
         self.filter_combo.currentIndexChanged.connect(self._refresh)
         bar.addWidget(self.filter_combo)
         bar.addStretch()
@@ -2622,8 +2833,21 @@ class AuditLogModal(QDialog):
         root.addWidget(self.scroll, 1)
 
         close_btn = QPushButton("Fermer")
-        close_btn.setStyleSheet(Styles.get_button_style(primary=False))
-        close_btn.setMinimumHeight(38)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563eb, stop:1 #3b82f6);
+                color: #eff6ff;
+                border: 1px solid rgba(147, 197, 253, 0.55);
+                border-radius: 14px;
+                padding: 9px 14px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4ed8, stop:1 #2563eb);
+            }
+        """)
+        close_btn.setMinimumHeight(40)
         close_btn.clicked.connect(self.accept)
         root.addWidget(close_btn)
 
@@ -2637,42 +2861,67 @@ class AuditLogModal(QDialog):
             w = self.list_layout.itemAt(i).widget()
             if w:
                 w.setParent(None)
+
+        def _add_empty_card(message: str):
+            card = QFrame()
+            card.setObjectName("journalCard")
+            l = QVBoxLayout(card)
+            l.setContentsMargins(14, 12, 14, 12)
+            info = QLabel(message)
+            info.setStyleSheet("color:#94a3b8; font-size:12px;")
+            l.addWidget(info)
+            self.list_layout.addWidget(card)
+
         if not hasattr(self.auth, "list_audit_logs"):
-            self.list_layout.addWidget(QLabel("Journal indisponible."))
+            _add_empty_card("Journal indisponible.")
             return
+
         logs = self.auth.list_audit_logs(self.user_id, self._filter_key())
         if not logs:
-            self.list_layout.addWidget(QLabel("Aucun journal disponible."))
+            _add_empty_card("Aucun journal disponible pour ce filtre.")
             return
+
+        icon_map = {
+            "login": "LOG",
+            "password": "PWD",
+            "vault": "BOX",
+            "failed": "ERR",
+        }
+
         for row in logs:
             action = row.get("action", "-")
             when = row.get("created_at")
             ts = when.strftime("%d/%m/%Y %H:%M") if when else "-"
             details = row.get("details") or ""
 
+            kind = "login"
+            if "password" in action:
+                kind = "password"
+            elif "vault" in action or "export" in action:
+                kind = "vault"
+            elif "failed" in action or "error" in action:
+                kind = "failed"
+
             card = QFrame()
-            card.setStyleSheet("""
-                QFrame {
-                    background: rgba(255,255,255,0.03);
-                    border: 1px solid rgba(255,255,255,0.08);
-                    border-radius: 12px;
-                }
-            """)
+            card.setObjectName("journalCard")
             row_l = QHBoxLayout(card)
             row_l.setContentsMargins(12, 10, 12, 10)
             row_l.setSpacing(12)
 
-            icon = QLabel("📄")
-            icon.setStyleSheet("font-size:18px;")
+            icon = QLabel(icon_map.get(kind, "EVT"))
+            icon.setStyleSheet("font-size:11px; font-weight:700; color:#dbeafe;")
 
             text_col = QVBoxLayout()
-            title = QLabel(action.replace(":", " • "))
-            title.setStyleSheet("font-weight:600; font-size:13px;")
-            sub = QLabel(f"{ts}  {details}")
-            sub.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:11px;")
+            title = QLabel(action.replace(":", " - "))
+            title.setStyleSheet("font-weight:700; font-size:13px; color:#f8fafc;")
+            details_txt = details if details else "Aucun detail"
+            sub = QLabel(f"{ts}  -  {details_txt}")
+            sub.setStyleSheet("color:#cbd5e1; font-size:11px;")
+            sub.setWordWrap(True)
             text_col.addWidget(title)
             text_col.addWidget(sub)
 
             row_l.addWidget(icon)
             row_l.addLayout(text_col, 1)
             self.list_layout.addWidget(card)
+

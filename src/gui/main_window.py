@@ -7,10 +7,10 @@ from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QMessageBox, QApplication, QPushButton, QDialog, QGridLayout, QLineEdit, QMenu, QAction,
-    QFileDialog, QComboBox, QStackedLayout
+    QFileDialog, QComboBox, QStackedLayout, QScrollArea
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QEvent
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QEvent, QRectF, QPointF
+from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QLinearGradient
 
 # UI + components
 from src.gui.components.sidebar import Sidebar
@@ -115,6 +115,151 @@ class Quick2FADialog(QDialog):
         self.code_input.setFocus()
 
 
+class DonutChartWidget(QWidget):
+    def __init__(self, segments: list[tuple[str, int, str]], parent=None):
+        super().__init__(parent)
+        self.segments = segments
+        self.setMinimumHeight(180)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        size = min(w, h) - 24
+        x = (w - size) / 2
+        y = (h - size) / 2
+        rect = QRectF(x, y, size, size)
+        total = max(1, sum(max(0, int(v)) for _, v, _ in self.segments))
+
+        bg_pen = QPen(QColor(255, 255, 255, 28), 18)
+        p.setPen(bg_pen)
+        p.drawArc(rect, 0, 360 * 16)
+
+        start = 90 * 16
+        for _name, value, color in self.segments:
+            v = max(0, int(value))
+            if v <= 0:
+                continue
+            span = int((v / total) * 360 * 16)
+            pen = QPen(QColor(color), 18)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.drawArc(rect, start, -span)
+            start -= span
+
+        p.setPen(QColor(235, 240, 255))
+        p.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        p.drawText(self.rect(), Qt.AlignCenter, str(total))
+
+
+class CategoryBarChartWidget(QWidget):
+    def __init__(self, items: list[tuple[str, int]], parent=None):
+        super().__init__(parent)
+        self.items = items[:6]
+        self.setMinimumHeight(180)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = self.rect().adjusted(16, 16, -16, -16)
+        if not self.items:
+            p.setPen(QColor(180, 190, 210))
+            p.drawText(r, Qt.AlignCenter, "Aucune categorie")
+            return
+
+        maxv = max(1, max(v for _, v in self.items))
+        row_h = max(24, int(r.height() / max(1, len(self.items))))
+        bar_left = r.left() + 110
+        bar_max_w = max(50, r.width() - 130)
+        for idx, (name, val) in enumerate(self.items):
+            y = r.top() + idx * row_h + 4
+            p.setPen(QColor(170, 182, 204))
+            p.setFont(QFont("Segoe UI", 9))
+            p.drawText(r.left(), y + 14, str(name)[:14])
+
+            bg = QRectF(bar_left, y, bar_max_w, 12)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 24))
+            p.drawRoundedRect(bg, 6, 6)
+
+            w = max(4, int((max(0, val) / maxv) * bar_max_w))
+            fg = QRectF(bar_left, y, w, 12)
+            grad = QLinearGradient(fg.topLeft(), fg.topRight())
+            grad.setColorAt(0.0, QColor(59, 130, 246))
+            grad.setColorAt(1.0, QColor(16, 185, 129))
+            p.setBrush(grad)
+            p.drawRoundedRect(fg, 6, 6)
+
+            p.setPen(QColor(230, 238, 255))
+            p.drawText(int(bar_left + bar_max_w + 8), y + 12, str(val))
+
+
+class TrendChartWidget(QWidget):
+    def __init__(self, labels: list[str], values: list[int], parent=None):
+        super().__init__(parent)
+        self.labels = labels
+        self.values = values
+        self.setMinimumHeight(170)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = self.rect().adjusted(18, 16, -18, -22)
+        if not self.values:
+            p.setPen(QColor(180, 190, 210))
+            p.drawText(r, Qt.AlignCenter, "Pas de donnees")
+            return
+
+        maxv = max(1, max(self.values))
+        n = len(self.values)
+        if n == 1:
+            points = [QPointF(r.center().x(), r.center().y())]
+        else:
+            step_x = r.width() / max(1, (n - 1))
+            points = []
+            for i, val in enumerate(self.values):
+                x = r.left() + i * step_x
+                y = r.bottom() - (max(0, val) / maxv) * (r.height() - 24)
+                points.append(QPointF(x, y))
+
+        p.setPen(QPen(QColor(255, 255, 255, 30), 1, Qt.DashLine))
+        for k in range(1, 4):
+            y = r.top() + (k * r.height() / 4)
+            p.drawLine(r.left(), int(y), r.right(), int(y))
+
+        line = QPainterPath()
+        line.moveTo(points[0])
+        for pt in points[1:]:
+            line.lineTo(pt)
+
+        area = QPainterPath(line)
+        area.lineTo(points[-1].x(), r.bottom())
+        area.lineTo(points[0].x(), r.bottom())
+        area.closeSubpath()
+        grad = QLinearGradient(r.topLeft(), r.bottomLeft())
+        grad.setColorAt(0.0, QColor(59, 130, 246, 110))
+        grad.setColorAt(1.0, QColor(59, 130, 246, 8))
+        p.setPen(Qt.NoPen)
+        p.setBrush(grad)
+        p.drawPath(area)
+
+        p.setPen(QPen(QColor(96, 165, 250), 2.5))
+        p.setBrush(QColor(16, 185, 129))
+        p.drawPath(line)
+        for pt in points:
+            p.drawEllipse(pt, 3.5, 3.5)
+
+        p.setPen(QColor(176, 189, 214))
+        p.setFont(QFont("Segoe UI", 8))
+        if n > 1:
+            step = max(1, n // 4)
+            for i in range(0, n, step):
+                p.drawText(int(points[i].x() - 12), r.bottom() + 16, self.labels[i])
+            if (n - 1) % step != 0:
+                p.drawText(int(points[-1].x() - 12), r.bottom() + 16, self.labels[-1])
+
+
 class UserProfileWidget(QWidget):
     logout_clicked = pyqtSignal()
     show_statistics = pyqtSignal()
@@ -129,48 +274,94 @@ class UserProfileWidget(QWidget):
         self._build()
 
     def _build(self):
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        shell = QFrame()
+        shell.setObjectName("profileCapsule")
+        shell.setStyleSheet("""
+            QFrame#profileCapsule {
+                background: rgba(15, 23, 42, 0.62);
+                border: 1px solid rgba(96, 165, 250, 0.30);
+                border-radius: 18px;
+            }
+        """)
+        row = QHBoxLayout(shell)
+        row.setContentsMargins(10, 8, 12, 8)
         row.setSpacing(10)
+        root.addWidget(shell)
 
         avatar = QPushButton(self.initials)
         avatar.setFixedSize(40, 40)
         avatar.setCursor(Qt.PointingHandCursor)
         avatar.clicked.connect(self._menu)
-        avatar.setStyleSheet(f"""
-            QPushButton {{
+        avatar.setStyleSheet("""
+            QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {Styles.BLUE_PRIMARY}, stop:1 {Styles.PURPLE});
-                border-radius: 20px; color:#fff; font-weight:bold;
-            }}
+                    stop:0 #2563eb, stop:1 #38bdf8);
+                border: 1px solid rgba(147, 197, 253, 0.6);
+                border-radius: 20px;
+                color:#f8fafc;
+                font-weight:700;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #1d4ed8, stop:1 #0ea5e9);
+            }
         """)
         row.addWidget(avatar)
 
         name_btn = QPushButton(self.username)
         name_btn.setCursor(Qt.PointingHandCursor)
         name_btn.clicked.connect(self._menu)
-        name_btn.setStyleSheet(f"""
-            QPushButton {{ background:transparent; color:{Styles.TEXT_PRIMARY};
-                          border:none; font-size:14px; }}
-            QPushButton:hover {{ color:{Styles.BLUE_SECONDARY}; }}
+        name_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #e2e8f0;
+                border: none;
+                text-align: left;
+                font-size: 13px;
+                font-weight: 600;
+                padding-right: 6px;
+            }
+            QPushButton:hover { color: #bfdbfe; }
         """)
         row.addWidget(name_btn)
 
     def _menu(self):
         m = QMenu(self)
-        m.setStyleSheet(f"""
-            QMenu {{background:#0f1e36; border:1px solid rgba(255,255,255,0.2);
-                    border-radius:10px; padding:10px; }}
-            QMenu::item {{padding:8px 14px; border-radius:8px; color:{Styles.TEXT_PRIMARY};}}
-            QMenu::item:selected {{background:rgba(59,130,246,0.25); }}
+        m.setStyleSheet("""
+            QMenu {
+                background: #0b1a30;
+                border: 1px solid rgba(148, 163, 184, 0.28);
+                border-radius: 12px;
+                padding: 8px;
+            }
+            QMenu::item {
+                padding: 8px 14px;
+                border-radius: 8px;
+                color: #e2e8f0;
+                font-size: 12px;
+            }
+            QMenu::item:selected {
+                background: rgba(59,130,246,0.22);
+                color: #f8fafc;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: rgba(148, 163, 184, 0.22);
+                margin: 5px 8px;
+            }
         """)
 
-        head = QAction(f"👤 {self.username}", self)
+        head = QAction(f"Compte: {self.username}", self)
         head.setEnabled(False)
         m.addAction(head)
         m.addSeparator()
 
-        act_edit = QAction("✏️ Modifier le profil", self)
+        act_edit = QAction("Modifier le profil", self)
         act_edit.triggered.connect(self.edit_profile_clicked.emit)
         m.addAction(act_edit)
 
@@ -188,7 +379,7 @@ class UserProfileWidget(QWidget):
 
         m.addSeparator()
 
-        act_logout = QAction("🚪 Se déconnecter", self)
+        act_logout = QAction("Se deconnecter", self)
         act_logout.triggered.connect(self.logout_clicked.emit)
         m.addAction(act_logout)
 
@@ -369,10 +560,16 @@ class MainWindow(QMainWindow):
 
         self.content_stack = QStackedLayout()
         self.password_list = PasswordList()
-        self.stats_page = QWidget()
-        self.stats_layout = QVBoxLayout(self.stats_page)
+        self.stats_page = QScrollArea()
+        self.stats_page.setWidgetResizable(True)
+        self.stats_page.setFrameShape(QFrame.NoFrame)
+        self.stats_page.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        stats_container = QWidget()
+        stats_container.setStyleSheet("background: transparent;")
+        self.stats_layout = QVBoxLayout(stats_container)
         self.stats_layout.setContentsMargins(0, 0, 0, 0)
         self.stats_layout.setSpacing(0)
+        self.stats_page.setWidget(stats_container)
         self.content_stack.addWidget(self.password_list)
         self.content_stack.addWidget(self.stats_page)
         v.addLayout(self.content_stack)
@@ -558,7 +755,7 @@ class MainWindow(QMainWindow):
         self.hide()
         while not self.current_user:
             dlg = LoginModal(self)
-            dlg.login_success.connect(self._on_login_attempt)
+            dlg.login_success.connect(lambda email, password, d=dlg: self._on_login_attempt(email, password, d))
             dlg.switch_to_register.connect(self._switch_to_register)
             res = dlg.exec_()
             if res != QDialog.Accepted and not self.current_user:
@@ -574,18 +771,48 @@ class MainWindow(QMainWindow):
         dlg.switch_to_login.connect(self._auth_flow)
         dlg.exec_()
 
-    def _on_login_attempt(self, email: str, password: str):
-        result = self.auth.authenticate(email, password)
+    def _on_login_attempt(self, email: str, password: str, login_dlg: QDialog | None = None):
+        # Always ask MFA method after password verification, so do not auto-send email code here.
+        result = self.auth.authenticate(email, password, send_2fa=False)
         if result.get("error"):
-            self._show_error_dialog("Erreur de connexion", result["error"])
-            return
-        if not result.get("2fa_sent", False):
-            self._show_error_dialog("Erreur", "Impossible d'envoyer le code 2FA")
+            if login_dlg and hasattr(login_dlg, "set_error"):
+                login_dlg.set_error(result["error"])
+            else:
+                self._show_error_dialog("Erreur de connexion", result["error"])
             return
         user = result.get("user")
-        self._show_2fa_login(user)
+        if not user:
+            if login_dlg and hasattr(login_dlg, "set_error"):
+                login_dlg.set_error("❌ Utilisateur introuvable dans la réponse de connexion.")
+            else:
+                self._show_error_dialog("Erreur", "Utilisateur introuvable dans la réponse de connexion.")
+            return
 
-    def _show_2fa_login(self, user: dict):
+        method = self._ask_login_mfa_method()
+        if method == "totp":
+            if not bool(user.get("totp_enabled")):
+                if login_dlg and hasattr(login_dlg, "set_error"):
+                    login_dlg.set_error("❌ Vérification Auth App indisponible. Activez TOTP dans Profil.")
+                else:
+                    self._show_error_dialog("MFA", "Vérification Auth App indisponible. Activez TOTP dans Profil.")
+                return
+            self._show_totp_login(user, login_dlg)
+            return
+
+        if method == "email":
+            sent = self.auth.send_2fa_code(user["email"], int(user["id"]), "login")
+            if sent:
+                self._show_2fa_login(user, login_dlg)
+            elif login_dlg and hasattr(login_dlg, "set_error"):
+                login_dlg.set_error("❌ Impossible d'envoyer le code email de vérification.")
+            else:
+                self._show_error_dialog("Erreur", "Impossible d'envoyer le code email de vérification.")
+            return
+
+        if login_dlg and hasattr(login_dlg, "set_error"):
+            login_dlg.set_error("ℹ️ Vérification annulée.")
+
+    def _show_2fa_login(self, user: dict, login_dlg: QDialog | None = None):
         dlg = TwoFactorModal(user["email"], "<code envoyé>", self)
 
         def verify():
@@ -601,6 +828,8 @@ class MainWindow(QMainWindow):
             if ok:
                 dlg.accept()
                 self._finalize_login(user)
+                if login_dlg:
+                    login_dlg.accept()
             else:
                 self._show_error_dialog("Erreur", "Code invalide ou expiré"
 )
@@ -611,8 +840,56 @@ class MainWindow(QMainWindow):
             pass
         dlg.code_verified.connect(verify)
 
-        if dlg.exec_() != QDialog.Accepted:
-            self._auth_flow()
+        dlg.exec_()
+
+    def _show_totp_login(self, user: dict, login_dlg: QDialog | None = None):
+        dlg = TwoFactorModal(user["email"], "<totp>", self, method="totp")
+
+        def verify():
+            code = dlg.code_input.text().strip()
+            if not code or len(code) != 6:
+                self._show_error_dialog("Code invalide", "Code 6 chiffres requis")
+                return
+            ok = False
+            if hasattr(self.auth, "verify_totp"):
+                ok = self.auth.verify_totp(user["email"], code)
+            if ok:
+                if hasattr(self.auth, "trust_device"):
+                    try:
+                        self.auth.trust_device(int(user["id"]))
+                    except Exception:
+                        pass
+                dlg.accept()
+                self._finalize_login(user)
+                if login_dlg:
+                    login_dlg.accept()
+            else:
+                self._show_error_dialog("Erreur", "Code d'application invalide ou expiré")
+
+        try:
+            dlg.code_verified.disconnect()
+        except Exception:
+            pass
+        dlg.code_verified.connect(verify)
+
+        dlg.exec_()
+
+    def _ask_login_mfa_method(self) -> str | None:
+        box = QMessageBox(self)
+        box.setWindowTitle("Vérification de connexion")
+        box.setIcon(QMessageBox.Question)
+        box.setText("Choisissez votre méthode de vérification pour cette connexion.")
+        box.setInformativeText("Sélectionnez Email (Gmail) ou Application Authenticator (TOTP).")
+        btn_totp = box.addButton("Application TOTP", QMessageBox.AcceptRole)
+        btn_email = box.addButton("Code Gmail", QMessageBox.ActionRole)
+        box.addButton("Annuler", QMessageBox.RejectRole)
+        box.exec_()
+        clicked = box.clickedButton()
+        if clicked == btn_totp:
+            return "totp"
+        if clicked == btn_email:
+            return "email"
+        return None
 
     def _on_register_attempt(self, name, email, password):
         """Handle registration with email verification"""
@@ -627,6 +904,7 @@ class MainWindow(QMainWindow):
             self, 
             "Inscription réussie", 
             f"✅ {msg}\n\n"
+            f"Adresse cible: {email}\n\n"
             "Un code de vérification a été envoyé à votre email.\n"
             "Veuillez vérifier votre boîte mail (et les spams)."
         )
@@ -675,17 +953,24 @@ class MainWindow(QMainWindow):
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"color:{Styles.TEXT_PRIMARY};")
         layout.addWidget(title)
-        
+
+        state = {"email": email}
+
         # Info
-        info = QLabel(
-            f"Un code de vérification a été envoyé à:\n"
-            f"{email}\n\n"
-            f"Vérifiez votre boîte mail (et les spams)"
-        )
+        info = QLabel("")
         info.setAlignment(Qt.AlignCenter)
         info.setWordWrap(True)
         info.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:13px;")
         layout.addWidget(info)
+
+        def refresh_info():
+            info.setText(
+                f"Un code de vérification a été envoyé à:\n"
+                f"{state['email']}\n\n"
+                f"Vérifiez votre boîte mail (et les spams)"
+            )
+
+        refresh_info()
         
         # Code input
         code_input = QLineEdit()
@@ -723,6 +1008,12 @@ class MainWindow(QMainWindow):
         resend_btn.setCursor(Qt.PointingHandCursor)
         resend_btn.setStyleSheet(Styles.get_button_style(False))
         layout.addWidget(resend_btn)
+
+        change_email_btn = QPushButton("✉️ Envoyer à une autre adresse")
+        change_email_btn.setMinimumHeight(44)
+        change_email_btn.setCursor(Qt.PointingHandCursor)
+        change_email_btn.setStyleSheet(Styles.get_button_style(False))
+        layout.addWidget(change_email_btn)
         
         # Countdown timer state
         countdown = {"seconds": 60, "active": False}
@@ -743,6 +1034,10 @@ class MainWindow(QMainWindow):
             countdown["seconds"] = 60
             countdown["active"] = True
             resend_btn.setEnabled(False)
+            try:
+                timer.timeout.disconnect(update_countdown)
+            except Exception:
+                pass
             timer.timeout.connect(update_countdown)
             timer.start(1000)
         
@@ -754,7 +1049,7 @@ class MainWindow(QMainWindow):
                 return
             
             # Verify the registration code
-            ok = self.auth.verify_registration_code(email, code)
+            ok = self.auth.verify_registration_code(state["email"], code)
             
             if ok:
                 dlg.accept()
@@ -766,8 +1061,8 @@ class MainWindow(QMainWindow):
                 )
                 user = {
                     "id": user_id,
-                    "email": email,
-                    "username": email.split('@')[0]
+                    "email": state["email"],
+                    "username": state["email"].split('@')[0]
                 }
                 self._finalize_login(user)
             else:
@@ -779,13 +1074,13 @@ class MainWindow(QMainWindow):
                 )
         
         def resend_code():
-            ok = self.auth.resend_verification_code(email)
+            ok = self.auth.resend_verification_code(state["email"])
             
             if ok:
                 QMessageBox.information(
                     dlg,
                     "Code renvoyé",
-                    f"✅ Un nouveau code a été envoyé à:\n{email}\n\n"
+                    f"✅ Un nouveau code a été envoyé à:\n{state['email']}\n\n"
                     "Vérifiez votre boîte mail (et les spams)"
                 )
                 code_input.clear()
@@ -797,9 +1092,38 @@ class MainWindow(QMainWindow):
                     "❌ Impossible de renvoyer le code.\n\n"
                     "L'email est peut-être déjà vérifié."
                 )
+
+        def change_email():
+            new_email, ok = QInputDialog.getText(
+                dlg,
+                "Changer l'adresse email",
+                "Nouvelle adresse email:",
+                QLineEdit.Normal,
+                state["email"],
+            )
+            if not ok:
+                return
+            new_email = (new_email or "").strip()
+            if not new_email:
+                return
+            if new_email == state["email"]:
+                QMessageBox.information(dlg, "Email", "Cette adresse est déjà utilisée pour la vérification.")
+                return
+
+            changed_ok, message, updated_email = self.auth.change_unverified_email(state["email"], new_email)
+            if not changed_ok:
+                QMessageBox.warning(dlg, "Erreur", message)
+                return
+
+            state["email"] = updated_email or new_email
+            refresh_info()
+            code_input.clear()
+            QMessageBox.information(dlg, "Email mis à jour", message)
+            start_countdown()
         
         verify_btn.clicked.connect(verify_code)
         resend_btn.clicked.connect(resend_code)
+        change_email_btn.clicked.connect(change_email)
         code_input.returnPressed.connect(verify_code)
         
         # Start countdown
@@ -1314,14 +1638,20 @@ class MainWindow(QMainWindow):
         wrap = QWidget()
         wrap.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(wrap)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(18)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(16)
 
         top = QHBoxLayout()
-        title = QLabel("Mes statistiques")
-        title.setFont(QFont("Segoe UI", 24, QFont.Bold))
-        title.setStyleSheet(f"color:{Styles.TEXT_PRIMARY};")
-        top.addWidget(title)
+        title = QLabel("Security Analytics")
+        title.setFont(QFont("Segoe UI", 26, QFont.Bold))
+        title.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; letter-spacing: 0.4px;")
+        subtitle = QLabel("Vue globale de la santé de votre coffre")
+        subtitle.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+        top.addLayout(title_col)
         top.addStretch()
         back_btn = QPushButton("← Retour")
         back_btn.setStyleSheet(
@@ -1364,116 +1694,213 @@ class MainWindow(QMainWindow):
             Styles.MEDIUM_COLOR if score >= 50 else Styles.WEAK_COLOR
         )
 
-        cards = QGridLayout()
-        cards.setHorizontalSpacing(16)
-        cards.setVerticalSpacing(16)
+        # Hero card
+        hero = QFrame()
+        hero.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(59,130,246,0.22),
+                    stop:1 rgba(16,185,129,0.18)
+                );
+                border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 18px;
+            }
+        """)
+        hl = QHBoxLayout(hero)
+        hl.setContentsMargins(18, 16, 18, 16)
+        hl.setSpacing(16)
+        hero_left = QVBoxLayout()
+        hero_left.setSpacing(3)
+        hero_title = QLabel("Score de sécurité")
+        hero_title.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+        hero_value = QLabel(f"{score}%")
+        hero_value.setStyleSheet(f"color:{score_color}; font-size:40px; font-weight:900;")
+        hero_tip = QLabel(
+            "Excellent niveau" if score >= 80 else ("Niveau correct" if score >= 50 else "Niveau à renforcer")
+        )
+        hero_tip.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:12px;")
+        hero_left.addWidget(hero_title)
+        hero_left.addWidget(hero_value)
+        hero_left.addWidget(hero_tip)
+        hl.addLayout(hero_left)
+        hl.addStretch()
+        ring = QLabel("🛡️")
+        ring.setStyleSheet("font-size:56px;")
+        hl.addWidget(ring)
+        lay.addWidget(hero)
 
-        def card(title_text, value_text, color):
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(14)
+        cards.setVerticalSpacing(14)
+
+        def card(icon_text, title_text, value_text, color):
             w = QFrame()
             w.setStyleSheet("""
                 QFrame {
-                    background: rgba(255,255,255,0.04);
-                    border: 1px solid rgba(255,255,255,0.06);
-                    border-radius: 14px;
+                    background: rgba(255,255,255,0.05);
+                    border: 1px solid rgba(255,255,255,0.08);
+                    border-radius: 16px;
                 }
             """)
             v = QVBoxLayout(w)
-            v.setContentsMargins(16, 12, 16, 12)
-            v.setSpacing(6)
+            v.setContentsMargins(14, 12, 14, 12)
+            v.setSpacing(4)
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            ic = QLabel(icon_text)
+            ic.setStyleSheet("font-size:15px;")
             t = QLabel(title_text)
             t.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+            row.addWidget(ic)
+            row.addWidget(t)
+            row.addStretch()
             val = QLabel(str(value_text))
-            val.setStyleSheet(f"color:{color}; font-size:26px; font-weight:800;")
-            v.addWidget(t)
+            val.setStyleSheet(f"color:{color}; font-size:24px; font-weight:800;")
+            v.addLayout(row)
             v.addWidget(val)
             return w
 
-        cards.addWidget(card("Total", total, Styles.BLUE_PRIMARY), 0, 0)
-        cards.addWidget(card("Forts", strong, Styles.STRONG_COLOR), 0, 1)
-        cards.addWidget(card("Moyens", medium, Styles.MEDIUM_COLOR), 0, 2)
-        cards.addWidget(card("Faibles", weak, Styles.WEAK_COLOR), 0, 3)
-        cards.addWidget(card("Favoris", favorites, Styles.BLUE_SECONDARY), 1, 0)
-        cards.addWidget(card("Reused", reused, Styles.MEDIUM_COLOR), 1, 1)
-        cards.addWidget(card("Old (180j+)", old, Styles.WEAK_COLOR), 1, 2)
-        cards.addWidget(card("Pwned", pwned, Styles.WEAK_COLOR), 1, 3)
+        cards.addWidget(card("🧾", "Total", total, Styles.BLUE_PRIMARY), 0, 0)
+        cards.addWidget(card("✅", "Forts", strong, Styles.STRONG_COLOR), 0, 1)
+        cards.addWidget(card("⚖️", "Moyens", medium, Styles.MEDIUM_COLOR), 0, 2)
+        cards.addWidget(card("⚠️", "Faibles", weak, Styles.WEAK_COLOR), 0, 3)
+        cards.addWidget(card("⭐", "Favoris", favorites, Styles.BLUE_SECONDARY), 1, 0)
+        cards.addWidget(card("🔁", "Réutilisés", reused, Styles.MEDIUM_COLOR), 1, 1)
+        cards.addWidget(card("🕒", "Anciens (180j+)", old, Styles.WEAK_COLOR), 1, 2)
+        cards.addWidget(card("🔎", "Pwned", pwned, Styles.WEAK_COLOR), 1, 3)
         lay.addLayout(cards)
 
-        score_wrap = QFrame()
-        score_wrap.setStyleSheet("""
+        panels = QGridLayout()
+        panels.setHorizontalSpacing(14)
+        panels.setVerticalSpacing(14)
+
+        panel_style = """
             QFrame {
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(255,255,255,0.06);
-                border-radius: 12px;
+                background: rgba(8, 20, 40, 0.62);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 16px;
             }
-        """)
-        sw = QHBoxLayout(score_wrap)
-        sw.setContentsMargins(14, 10, 14, 10)
-        score_label = QLabel("Score de securite")
-        score_label.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:14px;")
-        sw.addWidget(score_label, alignment=Qt.AlignLeft)
-        score_value = QLabel(f"{score}%")
-        score_value.setStyleSheet(f"color:{score_color}; font-size:26px; font-weight:800;")
-        sw.addWidget(score_value, alignment=Qt.AlignRight)
-        lay.addWidget(score_wrap)
+        """
 
-        graphs = QGridLayout()
-        graphs.setHorizontalSpacing(18)
-        graphs.setVerticalSpacing(18)
+        # Panel 1: Donut + legend
+        donut_box = QFrame()
+        donut_box.setStyleSheet(panel_style)
+        dl = QVBoxLayout(donut_box)
+        dl.setContentsMargins(14, 12, 14, 12)
+        dl.setSpacing(8)
+        dtitle = QLabel("Répartition visuelle")
+        dtitle.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:13px; font-weight:700;")
+        dl.addWidget(dtitle)
+        donut = DonutChartWidget([
+            ("Forts", strong, Styles.STRONG_COLOR),
+            ("Moyens", medium, Styles.MEDIUM_COLOR),
+            ("Faibles", weak, Styles.WEAK_COLOR),
+        ])
+        dl.addWidget(donut)
+        legend = QHBoxLayout()
+        legend.setSpacing(14)
+        for lbl, val, color in [("Forts", strong, Styles.STRONG_COLOR), ("Moyens", medium, Styles.MEDIUM_COLOR), ("Faibles", weak, Styles.WEAK_COLOR)]:
+            dot = QLabel(f"● {lbl} {val}")
+            dot.setStyleSheet(f"color:{color}; font-size:12px; font-weight:700;")
+            legend.addWidget(dot)
+        legend.addStretch()
+        dl.addLayout(legend)
 
-        def bar_row(label, value, color, total_width=260):
-            roww = QHBoxLayout()
-            roww.setSpacing(8)
-            lbl = QLabel(f"{label} ({value})")
-            lbl.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
-            bar = QFrame()
-            bar.setFixedHeight(10)
-            bar.setStyleSheet(f"background:{color}; border-radius:5px;")
-            width = total_width if total == 0 else int(total_width * (value / max(1, total)))
-            bar.setFixedWidth(width)
-            roww.addWidget(lbl)
-            roww.addWidget(bar)
-            roww.addStretch(1)
-            return roww
+        # Panel 2: Top categories bars
+        cat_counts = {}
+        for p in passwords:
+            c = str(p.get("category") or "other").strip()
+            cat_counts[c] = cat_counts.get(c, 0) + 1
+        top_cats = sorted(cat_counts.items(), key=lambda x: x[1], reverse=True)[:6]
+        cat_box = QFrame()
+        cat_box.setStyleSheet(panel_style)
+        cl = QVBoxLayout(cat_box)
+        cl.setContentsMargins(14, 12, 14, 12)
+        cl.setSpacing(8)
+        ctitle = QLabel("Top catégories")
+        ctitle.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:13px; font-weight:700;")
+        cl.addWidget(ctitle)
+        cl.addWidget(CategoryBarChartWidget(top_cats))
 
-        chart = QFrame()
-        chart.setStyleSheet("""
-            QFrame {
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(255,255,255,0.06);
-                border-radius: 12px;
-            }
-        """)
-        cl = QVBoxLayout(chart)
-        cl.setContentsMargins(16, 14, 16, 14)
-        cl.setSpacing(10)
-        chart_title = QLabel("Repartition des forces")
-        chart_title.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
-        cl.addWidget(chart_title)
-        cl.addLayout(bar_row("Forts", strong, Styles.STRONG_COLOR))
-        cl.addLayout(bar_row("Moyens", medium, Styles.MEDIUM_COLOR))
-        cl.addLayout(bar_row("Faibles", weak, Styles.WEAK_COLOR))
+        # Panel 3: 6-month trend
+        trend_box = QFrame()
+        trend_box.setStyleSheet(panel_style)
+        tl = QVBoxLayout(trend_box)
+        tl.setContentsMargins(14, 12, 14, 12)
+        tl.setSpacing(8)
+        ttitle = QLabel("Activité mensuelle (6 mois)")
+        ttitle.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:13px; font-weight:700;")
+        tl.addWidget(ttitle)
+        month_labels = []
+        month_keys = []
+        now = datetime.utcnow()
+        for i in range(5, -1, -1):
+            d = (now.replace(day=1) - timedelta(days=1)).replace(day=1) if i else now.replace(day=1)
+            # normalize by subtracting i months
+            cursor = now.replace(day=1)
+            for _ in range(i):
+                cursor = (cursor - timedelta(days=1)).replace(day=1)
+            key = f"{cursor.year:04d}-{cursor.month:02d}"
+            month_keys.append(key)
+            month_labels.append(cursor.strftime("%b"))
+        month_values = {k: 0 for k in month_keys}
+        for p in passwords:
+            ts = p.get("created_at") or p.get("last_updated") or ""
+            dt = None
+            s = str(ts).strip()
+            if s:
+                try:
+                    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                except Exception:
+                    try:
+                        dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        dt = None
+            if dt is None:
+                continue
+            mk = f"{dt.year:04d}-{dt.month:02d}"
+            if mk in month_values:
+                month_values[mk] += 1
+        trend_vals = [month_values[k] for k in month_keys]
+        tl.addWidget(TrendChartWidget(month_labels, trend_vals))
 
-        chart2 = QFrame()
-        chart2.setStyleSheet("""
-            QFrame {
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(255,255,255,0.06);
-                border-radius: 12px;
-            }
-        """)
-        c2 = QVBoxLayout(chart2)
-        c2.setContentsMargins(16, 14, 16, 14)
-        c2.setSpacing(10)
-        t2 = QLabel("Hygiene")
-        t2.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
-        c2.addWidget(t2)
-        c2.addLayout(bar_row("Reused", reused, Styles.MEDIUM_COLOR, total_width=220))
-        c2.addLayout(bar_row("Old", old, Styles.WEAK_COLOR, total_width=220))
-        c2.addLayout(bar_row("Pwned", pwned, Styles.WEAK_COLOR, total_width=220))
+        # Panel 4: Hygiene + tips
+        hygiene = QFrame()
+        hygiene.setStyleSheet(panel_style)
+        hyl = QVBoxLayout(hygiene)
+        hyl.setContentsMargins(14, 12, 14, 12)
+        hyl.setSpacing(8)
+        htitle = QLabel("Hygiène & recommandations")
+        htitle.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:13px; font-weight:700;")
+        hyl.addWidget(htitle)
+        facts = QLabel(
+            f"Réutilisés: {reused}\nAnciens: {old}\nPwned: {pwned}\nFaibles: {weak}"
+        )
+        facts.setStyleSheet(f"color:{Styles.TEXT_SECONDARY}; font-size:12px;")
+        hyl.addWidget(facts)
+        tips = []
+        if weak > 0:
+            tips.append("• Remplacez les mots de passe faibles.")
+        if reused > 0:
+            tips.append("• Évitez de réutiliser le même mot de passe.")
+        if old > 0:
+            tips.append("• Renouvelez les comptes anciens.")
+        if total == 0:
+            tips.append("• Ajoutez des comptes pour voir des stats utiles.")
+        if not tips:
+            tips.append("• Très bon niveau de sécurité, continuez ainsi.")
+        tips_lbl = QLabel("\n".join(tips))
+        tips_lbl.setWordWrap(True)
+        tips_lbl.setStyleSheet(f"color:{Styles.TEXT_PRIMARY}; font-size:12px;")
+        hyl.addWidget(tips_lbl)
+        hyl.addStretch()
 
-        graphs.addWidget(chart, 0, 0)
-        graphs.addWidget(chart2, 0, 1)
-        lay.addLayout(graphs)
+        panels.addWidget(donut_box, 0, 0)
+        panels.addWidget(cat_box, 0, 1)
+        panels.addWidget(trend_box, 1, 0)
+        panels.addWidget(hygiene, 1, 1)
+        lay.addLayout(panels)
         lay.addStretch(1)
 
         self.stats_layout.addWidget(wrap)

@@ -105,17 +105,39 @@ def strength_label(password: str) -> str:
 
 
 def check_pwned_password(password: str, timeout: int = 5) -> tuple[bool, int]:
-    """Check password against HIBP Pwned Passwords API (k-anonymity)."""
+    """Check a password with HIBP using k-anonymity.
+
+    Privacy model:
+    - Compute SHA1 locally.
+    - Send only first 5 hex chars (prefix) to HIBP `/range/{prefix}`.
+    - Compare returned suffixes locally; full hash is never transmitted.
+
+    Returns:
+    - (is_compromised, breach_count)
+    """
     if not password:
         return False, 0
+
     sha1_hash = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
     prefix, suffix = sha1_hash[:5], sha1_hash[5:]
     url = f"https://api.pwnedpasswords.com/range/{prefix}"
-    resp = requests.get(url, timeout=timeout)
+
+    try:
+        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "PasswordGuardian/1.0"})
+    except requests.RequestException:
+        return False, 0
+
     if resp.status_code != 200:
         return False, 0
+
     for line in resp.text.splitlines():
-        hash_suffix, count = line.split(":")
-        if hash_suffix == suffix:
-            return True, int(count)
+        if ":" not in line:
+            continue
+        hash_suffix, count = line.split(":", 1)
+        if hash_suffix.strip().upper() == suffix:
+            try:
+                return True, int(count.strip())
+            except ValueError:
+                return True, 0
+
     return False, 0

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """database/engine.py
-
-Pro/uni-friendly DB configuration:
+Database engine setup using SQLAlchemy.
 - Uses DATABASE_URL if provided (MySQL/Postgres/SQLite).
 - Defaults to local SQLite file (runs out-of-the-box, no MySQL required).
 """
