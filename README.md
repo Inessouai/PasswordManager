@@ -186,8 +186,3 @@ Current tests include coverage for:
 - API bridge for GUI: `src/backend/api_client.py`
 
 ---
-
-If you want, I can also generate:
-- a short user manual (`docs/USER_GUIDE.md`)
-- an API reference table with request/response examples
-- a deployment README for packaging into an executable.
