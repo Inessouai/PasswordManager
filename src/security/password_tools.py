@@ -118,12 +118,21 @@ def check_pwned_password(password: str, timeout: int = 5) -> tuple[bool, int]:
     if not password:
         return False, 0
 
+    # Keep the password exactly as entered (spaces are significant).
     sha1_hash = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
     prefix, suffix = sha1_hash[:5], sha1_hash[5:]
     url = f"https://api.pwnedpasswords.com/range/{prefix}"
+    headers = {
+        "User-Agent": "PasswordGuardian/1.0",
+        # Ask HIBP to pad results to reduce traffic-analysis leakage.
+        "Add-Padding": "true",
+    }
+    # Weak/common passwords often map to very large range responses.
+    # Use a longer read timeout so those lookups don't fail early.
+    req_timeout = (timeout, max(15, timeout * 4))
 
     try:
-        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "PasswordGuardian/1.0"})
+        resp = requests.get(url, timeout=req_timeout, headers=headers)
     except requests.RequestException:
         return False, 0
 

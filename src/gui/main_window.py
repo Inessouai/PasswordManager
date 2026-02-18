@@ -17,7 +17,7 @@ from src.gui.components.sidebar import Sidebar
 from src.gui.components.password_list import PasswordList
 from src.gui.components.modals import (
     LoginModal, RegisterModal, AddPasswordModal,
-    EditPasswordModal, ViewPasswordModal, TwoFactorModal
+    EditPasswordModal, ViewPasswordModal, TwoFactorModal, PasswordStrengthChecker
 )
 from src.gui.styles.styles import Styles
 from src.gui.autofill import (
@@ -2082,6 +2082,7 @@ class MainWindow(QMainWindow):
                 username = payload.get("username", "")
                 plain_password = payload.get("password", "")  #  Now expects 'password' key
                 category = payload.get("category", "personal")
+                strength = payload.get("strength", "medium")
                 
                 # Debug logging
                 print(f"\n{'='*60}")
@@ -2119,7 +2120,8 @@ class MainWindow(QMainWindow):
                     username=username,
                     encrypted_password=plain_password,  # Backend expects this key name
                     category=category,
-                    site_url=site_url
+                    site_url=site_url,
+                    strength=strength,
                 )
                 
                 if ok:
@@ -2171,6 +2173,7 @@ class MainWindow(QMainWindow):
 
         def _upd(_id, new_plain, _lm):
             enc = encrypt_for_storage(new_plain)
+            strength = PasswordStrengthChecker.check_strength(new_plain)[0]
             ok, msg = self.api_client.update_password(
                 password_id=_id,
                 updates={
@@ -2179,6 +2182,7 @@ class MainWindow(QMainWindow):
                     "encrypted_password": enc,
                     "category": p.get("category", "personal"),
                     "favorite": p.get("favorite", False),
+                    "strength": strength,
                 }
             )
             if ok:

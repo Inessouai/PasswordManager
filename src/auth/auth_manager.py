@@ -273,6 +273,64 @@ class AuthManager:
             print(f"✅ User created: {username} (ID: {u.id})")
             return u.id
 
+    def is_email_taken(self, email: str, exclude_user_id: int | None = None) -> bool:
+        k = self._key(email)
+        if not isinstance(k, str) or "@" not in k or "." not in k:
+            return True
+        with SessionLocal() as s:
+            q = select(User).where(User.email == k)
+            if exclude_user_id is not None:
+                q = q.where(User.id != int(exclude_user_id))
+            return s.execute(q).scalar_one_or_none() is not None
+
+    def update_profile(self, user_id: int, username: str, email: str) -> bool:
+        try:
+            uid = int(user_id)
+            new_name = (username or "").strip()
+            new_email = self._key(email)
+            if not new_name or not isinstance(new_email, str):
+                return False
+            if "@" not in new_email or "." not in new_email:
+                return False
+
+            with SessionLocal() as s:
+                u = s.get(User, uid)
+                if not u:
+                    return False
+
+                existing = (
+                    s.execute(select(User).where(User.email == new_email).where(User.id != uid))
+                    .scalar_one_or_none()
+                )
+                if existing:
+                    return False
+
+                old_email = u.email
+                u.username = new_name
+                u.email = new_email
+                s.commit()
+
+            old_k = self._key(old_email)
+            new_k = self._key(new_email)
+            if old_k in self.pending_2fa:
+                self.pending_2fa[new_k] = self.pending_2fa.pop(old_k)
+            if old_k in self.pending_reset:
+                self.pending_reset[new_k] = self.pending_reset.pop(old_k)
+            if old_k in self.pending_verify:
+                self.pending_verify[new_k] = self.pending_verify.pop(old_k)
+            if old_k in self.mfa_enabled_emails:
+                self.mfa_enabled_emails.discard(old_k)
+                self.mfa_enabled_emails.add(new_k)
+            return True
+        except Exception as e:
+            print(f"âŒ update_profile error: {e}")
+            return False
+
+    def update_master_password(self, email: str, new_password: str) -> bool:
+        if not new_password or len(str(new_password)) < 8:
+            return False
+        return self._set_password(email, new_password)
+
     # ------------ Public API ------------
     def register_user(self, username: str, email: str, password: str):
         existing = self._user_by_email(email)

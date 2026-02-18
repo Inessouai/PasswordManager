@@ -1112,7 +1112,8 @@ class AddPasswordModal(QDialog):
             'site_url': url,
             'username': user,
             'password': pwd,  # Corrected key
-            'category': category
+            'category': category,
+            'strength': PasswordStrengthChecker.check_strength(pwd)[0],
         }
 
         print(f"📤 Emitting password_added with payload: {payload}")
